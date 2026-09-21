@@ -259,6 +259,10 @@ public struct Config: Codable, Sendable {
             var fresh = Config.default
             fresh.muteWindows = []
             fresh.notifyRules = []
+            // Blank rules = notify everything (same sync the decode
+            // path runs): without this the legacy-fill scalars from
+            // Config.default would filter while the GUI shows blank.
+            fresh.applyRules()
             return fresh
         }
         let data = try Data(contentsOf: url)

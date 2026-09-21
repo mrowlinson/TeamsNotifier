@@ -60,6 +60,24 @@ struct NotifyRulesTests {
         #expect(encoded.contains("notifyRules") && c.notifyRules.isEmpty)
     }
 
+    @Test func freshLoadFromMissingFileIsPermissive() throws {
+        // Missing file = fresh install: blank rules must pair with
+        // permissive scalars (blank = notify everything), matching the
+        // stored-empty decode path (storedEmptyMeansPermissive).
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tn-rules-fresh-perm-\(UUID().uuidString).json").path
+        let c = try Config.load(from: missing)
+        #expect(c.notifyRules.isEmpty)
+        #expect(c.skipOwnMessages == false)
+        #expect(c.notifyOnEdit == true)
+        #expect(c.loudSubstring == "")
+        #expect(c.notifyTypes == [NotifyRule.allowAllMarker])
+        let d = ChatFilter.decide(
+            message: message(), isEdit: false, chatDisplayName: "Alice",
+            ownerMRI: ownerMRI, config: c)
+        #expect(d == .notify(reason: "chat-message"))
+    }
+
     // MARK: (a) existing-install preservation
 
     @Test func legacyDefaultsMigrateToStockRules() throws {
