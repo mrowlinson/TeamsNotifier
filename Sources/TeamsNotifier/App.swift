@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var muteState = MuteState()
     private var scheduleTimeZone: TimeZone = TimeZone(identifier: MuteSchedule.defaultTimeZoneID) ?? TimeZone.current
     private var muteTimer: Timer?
+    private var historyPruneTimer: Timer?
     private var auth = AuthManager()
     private var api: TeamsAPI?
     private var trouter: TrouterClient?
@@ -139,6 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let v = flags.loudSubstring { config.loudSubstring = v }
 
         Notifier.shared.setup()
+        HistoryStore.pruneIfNeeded()
+        scheduleHistoryPruneTimer()
         setupMenu(status: "starting…")
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(muteDidWake),
@@ -266,6 +269,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hasUnread = true
             updateIcon()
             Notifier.shared.post(title: title, body: m.plainText, id: m.messageID.isEmpty ? nil : m.messageID, chatID: m.chatID)
+            // History: notified messages only (suppressed stay out).
+            // Sync tiny append; failures are debug-logged, never user faults.
+            HistoryStore.append(sender: m.senderName, chat: chatName, threadID: m.chatID, text: m.plainText, date: now)
         }
     }
 
@@ -400,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show log", action: #selector(menuShowLog), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show history", action: #selector(menuShowHistory), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Copy diagnostics", action: #selector(menuCopyDiagnostics), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(menuQuit), keyEquivalent: "q"))
         for i in menu.items { i.target = self }
@@ -559,6 +566,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuShowLog() {
         NSWorkspace.shared.open(Log.logFileURL)
+    }
+
+    @objc private func menuShowHistory() {
+        HistoryStore.ensureFileExists()
+        NSWorkspace.shared.open(HistoryStore.historyFileURL)
+    }
+
+    // MARK: History retention
+
+    /// Launch prune happens in applicationDidFinishLaunching; this re-arms
+    /// the daily pass (24h interval, first fire a day out).
+    private func scheduleHistoryPruneTimer() {
+        historyPruneTimer?.invalidate()
+        let t = Timer(
+            timeInterval: 24 * 60 * 60, target: self,
+            selector: #selector(historyPruneTimerFired), userInfo: nil, repeats: true)
+        t.tolerance = 60
+        RunLoop.main.add(t, forMode: .common)
+        historyPruneTimer = t
+    }
+
+    @objc private func historyPruneTimerFired() {
+        HistoryStore.pruneIfNeeded()
     }
 
     @objc private func menuCopyDiagnostics() {
