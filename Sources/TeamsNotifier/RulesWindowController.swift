@@ -9,10 +9,10 @@ import TeamsCore
 /// Menu-bar-only character kept: on-demand window, Cmd-W closes to
 /// nothing, no dock change.
 ///
-/// The kind field is free text with the stock kinds offered for
-/// completion, so NEW rule types are addable (not a fixed set). Unknown
-/// kinds store and round-trip; the filter ignores them until a lane
-/// implements them.
+/// The kind field is free text with the stock kinds' display names
+/// offered for completion (ids store underneath), so NEW rule types
+/// are addable (not a fixed set). Unknown kinds store and round-trip;
+/// the filter ignores them until a lane implements them.
 @MainActor
 final class RulesWindowController: NSWindowController {
     private static var shared: RulesWindowController?
@@ -58,9 +58,20 @@ final class RulesWindowController: NSWindowController {
     /// only stored on Save, and fresh installs open blank.
     private static let template = NotifyRule(kind: NotifyRule.skipMyMessages)
 
+    /// Width of the longest kind display name in the system font, plus
+    /// `extra` for control chrome. Sizes the combo and Kind column so
+    /// full names show without clipping.
+    private static func kindDisplayWidth(extra: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let widest = NotifyRule.knownDisplayNames
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        return ceil(widest) + extra
+    }
+
     init() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 500),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered, defer: false)
         win.title = "Notify rules"
@@ -86,7 +97,7 @@ final class RulesWindowController: NSWindowController {
             let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(col.rawValue))
             switch col {
             case .on: c.title = "On"; c.width = 36
-            case .kind: c.title = "Kind"; c.width = 130
+            case .kind: c.title = "Kind"; c.width = max(130, Self.kindDisplayWidth(extra: 12))
             case .value: c.title = "Value"; c.width = 200
             }
             c.resizingMask = [.userResizingMask]
@@ -113,14 +124,15 @@ final class RulesWindowController: NSWindowController {
         rowButtons.orientation = .horizontal
         rowButtons.spacing = 8
 
-        kindCombo.addItems(withObjectValues: NotifyRule.knownKinds)
+        kindCombo.addItems(withObjectValues: NotifyRule.knownDisplayNames)
+        kindCombo.numberOfVisibleItems = NotifyRule.knownKinds.count
         kindCombo.completes = true
         kindCombo.delegate = self
         kindCombo.target = self
         kindCombo.action = #selector(kindPicked)
         kindCombo.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            kindCombo.widthAnchor.constraint(equalToConstant: 150),
+            kindCombo.widthAnchor.constraint(equalToConstant: max(150, Self.kindDisplayWidth(extra: 32))),
         ])
         valueField.delegate = self
         valueField.placeholderString = "(ignored)"
@@ -207,7 +219,7 @@ final class RulesWindowController: NSWindowController {
         valueField.isEnabled = has
         enabledCheck.isEnabled = has
         if has {
-            kindCombo.stringValue = draft[r].kind
+            kindCombo.stringValue = NotifyRule.displayName(for: draft[r].kind)
             valueField.stringValue = draft[r].value
             enabledCheck.state = draft[r].enabled ? .on : .off
             refreshKindChrome(kind: draft[r].kind.trimmingCharacters(in: .whitespaces))
@@ -219,9 +231,8 @@ final class RulesWindowController: NSWindowController {
         }
     }
 
-    /// Hint + value-field label/placeholder/enabled for a kind. The combo
-    /// offers the plain-language stock kinds; free text stays for custom
-    /// types.
+    /// Hint + value-field label/placeholder/enabled for a kind id. The
+    /// combo shows display names; free text stays for custom types.
     private func refreshKindChrome(kind: String) {
         hintLabel.stringValue = kind.isEmpty ? "" : NotifyRule.hint(for: kind)
         valueLabel.stringValue = NotifyRule.valueLabel(for: kind)
@@ -240,8 +251,9 @@ final class RulesWindowController: NSWindowController {
     private func applyEditor(revertUI: Bool) {
         let r = selectedRow
         guard r >= 0 else { return }
-        // Canonicalize: a pasted pre-rename id becomes its replacement.
-        let kind = NotifyRule.canonicalKind(kindCombo.stringValue.trimmingCharacters(in: .whitespaces))
+        // Display name -> stored id (pasted ids, legacy included,
+        // and custom text pass through).
+        let kind = NotifyRule.kind(fromDisplayName: kindCombo.stringValue)
         let candidate = NotifyRule(
             kind: kind,
             value: valueField.stringValue.trimmingCharacters(in: .whitespaces),
@@ -376,7 +388,7 @@ extension RulesWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 return c
             }()
             switch tableColumn?.identifier.rawValue {
-            case Col.kind.rawValue: cell.textField?.stringValue = rule.kind
+            case Col.kind.rawValue: cell.textField?.stringValue = NotifyRule.displayName(for: rule.kind)
             case Col.value.rawValue: cell.textField?.stringValue = rule.value.isEmpty ? "—" : rule.value
             default: break
             }
