@@ -25,14 +25,14 @@ struct MenuIconSelectTests {
     }
 }
 
-@Suite("Menu icon geometry + palette")
+@Suite("Menu icon geometry (22pt template)")
 struct MenuIconGeometryTests {
     func inside(_ x: Double, _ y: Double) -> Bool {
         x >= 0 && x <= MenuIcon.canvasSize && y >= 0 && y <= MenuIcon.canvasSize
     }
 
     @Test func canvasIsMenuBarSize() {
-        #expect(MenuIcon.canvasSize == 18.0)
+        #expect(MenuIcon.canvasSize == 22.0)
     }
 
     @Test func bubbleInsideCanvas() {
@@ -56,9 +56,30 @@ struct MenuIconGeometryTests {
         #expect(inside(MenuIcon.slashTo.x, MenuIcon.slashTo.y))
     }
 
-    @Test func teamsPurple() {
-        #expect(MenuIcon.purple.r == 0x62)
-        #expect(MenuIcon.purple.g == 0x64)
-        #expect(MenuIcon.purple.b == 0xA7)
+    @Test func plainArtVerticallyCentered() {
+        // Symmetric top/bottom padding: tail tip pad == bubble-top pad.
+        let bottomPad = MenuIcon.tail.map(\.y).min()!
+        let topPad = MenuIcon.canvasSize - (MenuIcon.bubbleY + MenuIcon.bubbleH)
+        #expect(abs(topPad - bottomPad) < 0.02)
+    }
+
+    @Test func bubbleHorizontallyCentered() {
+        let leftPad = MenuIcon.bubbleX
+        let rightPad = MenuIcon.canvasSize - (MenuIcon.bubbleX + MenuIcon.bubbleW)
+        #expect(abs(leftPad - rightPad) < 0.02)
+    }
+
+    @Test func dotRingLeavesFilledDot() {
+        #expect(MenuIcon.dotRing > 0)
+        #expect(MenuIcon.dotRadius - MenuIcon.dotRing > 0)
+    }
+
+    @Test func slashWidthPositive() {
+        #expect(MenuIcon.slashWidth > 0)
+    }
+
+    @Test func tFontScaledFromV1() {
+        // v1 10pt at 18pt canvas -> 10 * 22/18.
+        #expect(abs(MenuIcon.tFontSize - 10 * 22 / 18) < 0.05)
     }
 }

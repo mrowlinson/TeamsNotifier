@@ -392,10 +392,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateIcon()
     }
 
-    /// Menu-bar icon (code-drawn, no assets): purple T-bubble normally,
-    /// orange dot on unread message notifications, desaturated bubble +
-    /// slash when delivery is blocked or switched off in Settings. Falls
-    /// back to "TN" text if image init ever fails.
+    /// Menu-bar icon (code-drawn template, no assets): black T-bubble
+    /// (macOS tints per theme), dot on unread message notifications,
+    /// slashed bubble when delivery is blocked or switched off in
+    /// Settings. Falls back to "TN" text if image init ever fails.
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
         let variant = MenuIcon.select(

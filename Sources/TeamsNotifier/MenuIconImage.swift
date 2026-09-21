@@ -1,10 +1,12 @@
 import AppKit
 import TeamsCore
 
-/// Code-drawn menu-bar icon: Teams-purple chat bubble with a white bold "T".
-/// No PNG assets, no catalog. Vector-drawn in an 18pt NSImage via lockFocus,
-/// so backing scales to retina automatically. `isTemplate` stays false: the
-/// purple fill is the identifier (template mode would flatten it to black).
+/// Code-drawn menu-bar icon: monochrome chat bubble with a knocked-out
+/// bold "T". No PNG assets, no catalog. Vector-drawn in a 22pt NSImage via
+/// lockFocus, so backing scales to retina automatically. `isTemplate` is
+/// true and all art is opaque black: macOS tints for light/dark menu bars.
+/// Cutouts (T, unread ring, blocked slash) erase to transparent via
+/// destinationOut, so they read on any tint or wallpaper.
 enum MenuIconImage {
     /// Nil only when lockFocus yields no graphics context (near-impossible;
     /// caller falls back to "TN" text).
@@ -16,13 +18,12 @@ enum MenuIconImage {
         guard NSGraphicsContext.current != nil else { return nil }
         NSGraphicsContext.current?.imageInterpolation = .high
         draw(variant)
-        img.isTemplate = false
+        img.isTemplate = true
         return img
     }
 
     private static func draw(_ variant: MenuIcon.Variant) {
-        let blocked = variant == .blocked
-        // Bubble + tail as one filled path.
+        // Bubble + tail as one filled black path.
         let bubble = NSBezierPath(
             roundedRect: NSRect(
                 x: MenuIcon.bubbleX, y: MenuIcon.bubbleY,
@@ -35,69 +36,70 @@ enum MenuIconImage {
         tail.line(to: NSPoint(x: MenuIcon.tail[2].x, y: MenuIcon.tail[2].y))
         tail.close()
         bubble.append(tail)
-        if blocked {
-            gray(MenuIcon.blockedGray).setFill()
-        } else {
-            let p = MenuIcon.purple
-            rgb(p.r, p.g, p.b).setFill()
-        }
+        NSColor.black.setFill()
         bubble.fill()
 
-        // White bold "T" centered in the bubble body (above the tail).
+        // Bold "T" knocked out of the bubble body (above the tail).
         let body = NSRect(
             x: MenuIcon.bubbleX, y: MenuIcon.bubbleY,
             width: MenuIcon.bubbleW, height: MenuIcon.bubbleH)
-        let font = NSFont.boldSystemFont(ofSize: 10)
+        let font = NSFont.boldSystemFont(ofSize: CGFloat(MenuIcon.tFontSize))
         let style = NSMutableParagraphStyle()
         style.alignment = .center
-        let tAlpha: CGFloat = blocked ? 0.55 : 1.0
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor.white.withAlphaComponent(tAlpha),
+            .foregroundColor: NSColor.black,
             .paragraphStyle: style,
         ]
         let tSize = ("T" as NSString).size(withAttributes: attrs)
         let tRect = NSRect(
             x: body.minX,
-            y: body.minY + (body.height - tSize.height) / 2 + 0.5,
+            y: body.minY + (body.height - tSize.height) / 2 + 0.6,
             width: body.width, height: tSize.height)
-        ("T" as NSString).draw(in: tRect, withAttributes: attrs)
+        knockout {
+            ("T" as NSString).draw(in: tRect, withAttributes: attrs)
+        }
 
         switch variant {
         case .plain:
             break
         case .unread:
-            // White ring + orange fill, concentric over bubble corner.
+            // Clear ring then filled dot, concentric over bubble corner.
             let c = NSPoint(x: MenuIcon.dotX, y: MenuIcon.dotY)
-            circle(at: c, radius: CGFloat(MenuIcon.dotRadius), color: .white)
-            let o = MenuIcon.unreadOrange
-            circle(at: c, radius: CGFloat(MenuIcon.dotRadius) - 0.9, color: rgb(o.r, o.g, o.b))
+            knockout {
+                fillCircle(at: c, radius: CGFloat(MenuIcon.dotRadius), color: .black)
+            }
+            fillCircle(
+                at: c,
+                radius: CGFloat(MenuIcon.dotRadius - MenuIcon.dotRing),
+                color: .black)
         case .blocked:
-            // Outlined slash: dark underlay + white core reads on both
+            // Slash cut through the bubble; transparent gap reads on both
             // light and dark menu bars.
             let path = NSBezierPath()
             path.move(to: NSPoint(x: MenuIcon.slashFrom.x, y: MenuIcon.slashFrom.y))
             path.line(to: NSPoint(x: MenuIcon.slashTo.x, y: MenuIcon.slashTo.y))
             path.lineCapStyle = .round
-            NSColor.black.withAlphaComponent(0.75).setStroke()
-            path.lineWidth = 3.2
-            path.stroke()
-            NSColor.white.setStroke()
-            path.lineWidth = 1.8
-            path.stroke()
+            knockout {
+                NSColor.black.setStroke()
+                path.lineWidth = CGFloat(MenuIcon.slashWidth)
+                path.stroke()
+            }
         }
     }
 
-    private static func circle(at c: NSPoint, radius r: CGFloat, color: NSColor) {
+    /// Runs `work` with the context erasing to transparent instead of
+    /// painting (restores sourceOver after). Paint color inside is
+    /// irrelevant; only alpha matters.
+    private static func knockout(_ work: () -> Void) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.setBlendMode(.destinationOut)
+        work()
+        ctx.setBlendMode(.normal)
+    }
+
+    private static func fillCircle(at c: NSPoint, radius r: CGFloat, color: NSColor) {
         color.setFill()
         NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)).fill()
-    }
-
-    private static func rgb(_ r: Int, _ g: Int, _ b: Int) -> NSColor {
-        NSColor(calibratedRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
-    }
-
-    private static func gray(_ v: Int) -> NSColor {
-        NSColor(calibratedWhite: CGFloat(v) / 255, alpha: 1)
     }
 }
