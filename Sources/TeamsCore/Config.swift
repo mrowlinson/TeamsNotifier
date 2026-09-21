@@ -35,15 +35,20 @@ public struct Config: Codable, Sendable {
     /// stored value no longer means anything. Kept so old configs still
     /// decode/round-trip.
     public var muted: Bool
-    /// Weekly mute schedule. Default: muted Mon-Fri 00:00-07:50 +
-    /// 16:40-24:00 + all day Sat/Sun (unmuted Mon-Fri 07:50-16:40).
-    /// Empty list disables scheduled mute (never muted by schedule).
+    /// Weekly mute schedule. Fresh installs start EMPTY (never muted by
+    /// schedule); configs that predate stored schedules migrate the
+    /// owner's entries on first load (see didMigrateSchedule). Edited in
+    /// the GUI (menu Edit schedule) and persisted to this file.
     public var muteWindows: [MuteWindow]
     /// IANA time zone the schedule runs in. Default "America/New_York".
     public var scheduleTZ: String
     /// Issues seen while decoding the schedule keys (wrong JSON types).
     /// Not encoded. Drained by normalizeSchedule() into fault-log lines.
     public var scheduleDecodeIssues: [String] = []
+    /// True when this load migrated a legacy config (muteWindows key
+    /// absent) to the owner schedule. Not encoded. The app logs it; load
+    /// already persisted the migrated entries back to the store.
+    public var didMigrateSchedule: Bool = false
 
     public init(
         owner: Owner = Owner(),
@@ -52,7 +57,7 @@ public struct Config: Codable, Sendable {
         skipOwnMessages: Bool = true,
         notifyTypes: [String] = ["Text", "RichText"],
         muted: Bool = false,
-        muteWindows: [MuteWindow] = MuteWindow.defaults,
+        muteWindows: [MuteWindow] = [],
         scheduleTZ: String = MuteSchedule.defaultTimeZoneID
     ) {
         self.owner = owner
@@ -81,18 +86,23 @@ public struct Config: Codable, Sendable {
         skipOwnMessages = (try? c.decodeIfPresent(Bool.self, forKey: .skipOwnMessages)) ?? d.skipOwnMessages
         notifyTypes = (try? c.decodeIfPresent([String].self, forKey: .notifyTypes)) ?? d.notifyTypes
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
-        // Schedule keys: present-but-undecodable falls back to defaults AND
-        // records a fault-log line (a silent try? would hide owner typos).
+        // Schedule keys: present-but-undecodable falls back to the owner
+        // schedule AND records a fault-log line (a silent try? would hide
+        // owner typos). Absent key = legacy config from an existing
+        // install: migrate the owner entries (quietly). Fresh installs
+        // never decode at all (missing file returns Config.default).
         scheduleDecodeIssues = []
         if c.contains(.muteWindows) {
             do {
-                muteWindows = try c.decodeIfPresent([MuteWindow].self, forKey: .muteWindows) ?? d.muteWindows
+                muteWindows = try c.decodeIfPresent([MuteWindow].self, forKey: .muteWindows) ?? []
             } catch {
-                muteWindows = d.muteWindows
-                scheduleDecodeIssues.append("bad muteWindows (undecodable JSON, want [{days,start,end}]), using defaults")
+                muteWindows = MuteWindow.ownerSchedule
+                scheduleDecodeIssues.append("bad muteWindows (undecodable JSON, want [{days,start,end}]), using owner schedule")
             }
+            didMigrateSchedule = false
         } else {
-            muteWindows = d.muteWindows
+            muteWindows = MuteWindow.ownerSchedule
+            didMigrateSchedule = true
         }
         if c.contains(.scheduleTZ) {
             do {
@@ -117,8 +127,8 @@ public struct Config: Codable, Sendable {
         scheduleDecodeIssues = []
         for w in muteWindows {
             if let issue = w.issue() {
-                warnings.append("bad muteWindows (\(issue)), using defaults")
-                muteWindows = MuteWindow.defaults
+                warnings.append("bad muteWindows (\(issue)), using owner schedule")
+                muteWindows = MuteWindow.ownerSchedule
                 break
             }
         }
@@ -136,16 +146,26 @@ public struct Config: Codable, Sendable {
         NSString(string: "~/.config/teamsnotifier/config.json").expandingTildeInPath
     }
 
-    /// Load from path; missing file yields defaults (owner display name
-    /// still required for mention fallback, warned at startup).
+    /// Load from path; missing file yields a FRESH config with an empty
+    /// schedule (zero seeded entries). An existing file whose JSON lacks
+    /// the schedule keys migrates the owner entries AND persists them
+    /// back to the store (best-effort: a failed write keeps the file as
+    /// it was while the in-memory schedule is still migrated).
     public static func load(from path: String) throws -> Config {
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
-        guard FileManager.default.fileExists(atPath: url.path) else { return .default }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            var fresh = Config.default
+            fresh.muteWindows = []
+            return fresh
+        }
         let data = try Data(contentsOf: url)
         var cfg = try JSONDecoder().decode(Config.self, from: data)
         if cfg.owner.displayName.isEmpty { cfg.owner.displayName = Config.default.owner.displayName }
         if cfg.loudSubstring.isEmpty { cfg.loudSubstring = "BTAC" }
         if cfg.notifyTypes.isEmpty { cfg.notifyTypes = ["Text", "RichText"] }
+        if cfg.didMigrateSchedule {
+            try? cfg.save(to: path)
+        }
         return cfg
     }
 

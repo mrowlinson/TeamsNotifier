@@ -16,7 +16,7 @@ import Testing
 struct MuteScheduleTests {
     static let et = TimeZone(identifier: "America/New_York")!
     static let plus5 = TimeZone(secondsFromGMT: 5 * 3600)!
-    static let windows = MuteWindow.defaults
+    static let windows = MuteWindow.ownerSchedule
 
     static func at(_ s: String, tz: TimeZone? = nil) -> Date {
         let f = DateFormatter()
@@ -275,34 +275,91 @@ struct MuteScheduleTests {
         #expect(MuteWindow(days: [2], start: "09:00", end: "09:00").isValid == false)
     }
 
-    @Test func configDefaultsSchedule() {
-        #expect(Config.default.muteWindows == MuteWindow.defaults)
+    @Test func freshConfigHasEmptySchedule() throws {
+        // Fresh installs: zero seeded entries, anywhere.
+        #expect(Config().muteWindows.isEmpty)
+        #expect(Config.default.muteWindows.isEmpty)
         #expect(Config.default.scheduleTZ == "America/New_York")
-        #expect(MuteWindow.defaults.count == 3)
-        let allValid = MuteWindow.defaults.allSatisfy { $0.isValid }
-        #expect(allValid)
+        // Missing file loads fresh (never migrates, never seeds).
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tn-fresh-\(UUID().uuidString).json").path
+        let c = try Config.load(from: missing)
+        #expect(c.muteWindows.isEmpty)
+        #expect(c.didMigrateSchedule == false)
     }
 
-    @Test func legacyConfigDecodesScheduleDefaultsQuietly() throws {
+    @Test func ownerScheduleStaysValid() {
+        // Migration source: 3 entries, all valid, all enabled.
+        #expect(MuteWindow.ownerSchedule.count == 3)
+        #expect(MuteWindow.ownerSchedule.allSatisfy { $0.isValid })
+        #expect(MuteWindow.ownerSchedule.allSatisfy { $0.enabled })
+    }
+
+    @Test func legacyConfigMigratesOwnerScheduleQuietly() throws {
+        // Existing install whose JSON predates the schedule keys: the
+        // owner entries migrate in, quietly, flagged for the app log.
         let json = #"{"owner":{"displayName":"N","upn":"","mri":""},"muted":true}"#
         var c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
-        #expect(c.muteWindows == MuteWindow.defaults)
+        #expect(c.muteWindows == MuteWindow.ownerSchedule)
+        #expect(c.didMigrateSchedule == true)
         #expect(c.scheduleTZ == "America/New_York")
         #expect(c.normalizeSchedule().isEmpty)
     }
 
-    @Test func badWindowFallsBackToDefaults() throws {
+    @Test func migrationPersistsToStoreOnFirstLoad() throws {
+        // First load of a legacy file writes the migrated entries back,
+        // so the second load finds stored keys (no re-migration).
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tn-migrate-\(UUID().uuidString)")
+        let path = dir.appendingPathComponent("config.json").path
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try #"{"owner":{"displayName":"N","upn":"","mri":""}}"#.write(
+            toFile: path, atomically: true, encoding: .utf8)
+        let first = try Config.load(from: path)
+        #expect(first.muteWindows == MuteWindow.ownerSchedule)
+        #expect(first.didMigrateSchedule == true)
+        let stored = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(stored.contains("muteWindows"))
+        let second = try Config.load(from: path)
+        #expect(second.muteWindows == MuteWindow.ownerSchedule)
+        #expect(second.didMigrateSchedule == false)
+    }
+
+    @Test func explicitEmptyScheduleSurvivesRoundTrip() throws {
+        // An owner-cleared schedule (GUI: remove all + Save) stays empty
+        // across save/load: empty is a stored choice, not a legacy gap.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tn-empty-\(UUID().uuidString)")
+        let path = dir.appendingPathComponent("config.json").path
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var c = Config.default
+        c.muteWindows = []
+        try c.save(to: path)
+        let back = try Config.load(from: path)
+        #expect(back.muteWindows.isEmpty)
+        #expect(back.didMigrateSchedule == false)
+    }
+
+    @Test func nullWindowsDecodeEmpty() throws {
+        let json = #"{"muteWindows":null}"#
+        let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
+        #expect(c.muteWindows.isEmpty)
+        #expect(c.didMigrateSchedule == false)
+    }
+
+    @Test func badWindowFallsBackToOwnerSchedule() throws {
         let json = #"{"muteWindows":[{"days":[9],"start":"xx","end":"yy"}]}"#
         var c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         let w = c.normalizeSchedule()
         #expect(w.count == 1)
-        #expect(c.muteWindows == MuteWindow.defaults)
+        #expect(c.muteWindows == MuteWindow.ownerSchedule)
     }
 
-    @Test func wrongTypedWindowsFallBackToDefaults() throws {
+    @Test func wrongTypedWindowsFallBackToOwnerSchedule() throws {
         let json = #"{"muteWindows":"everyday"}"#
         var c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
-        #expect(c.muteWindows == MuteWindow.defaults)
+        #expect(c.muteWindows == MuteWindow.ownerSchedule)
         let w = c.normalizeSchedule()
         #expect(w.count == 1)
         #expect(c.normalizeSchedule().isEmpty) // decode issues drain once
@@ -330,5 +387,46 @@ struct MuteScheduleTests {
         let back = try JSONDecoder().decode(Config.self, from: JSONEncoder().encode(c))
         #expect(back.muteWindows == c.muteWindows)
         #expect(back.scheduleTZ == "Europe/Paris")
+    }
+
+    // MARK: per-entry enabled switch + GUI labels
+
+    @Test func disabledWindowsAreSkipped() {
+        // Mon 2026-09-21 17:00 is inside the owner evening window.
+        let on = Self.windows
+        #expect(MuteSchedule.scheduledMuted(at: Self.at("2026-09-21 17:00"), windows: on, timeZone: Self.et) == true)
+        var off = on
+        for i in off.indices { off[i].enabled = false }
+        #expect(MuteSchedule.scheduledMuted(at: Self.at("2026-09-21 17:00"), windows: off, timeZone: Self.et) == false)
+        #expect(MuteSchedule.nextTransition(after: Self.at("2026-09-21 08:00"), windows: off, timeZone: Self.et) == nil)
+        // Mixed: one disabled window drops out, the rest still govern.
+        var mixed = [MuteWindow(days: [2], start: "08:00", end: "10:00", enabled: false)]
+        #expect(MuteSchedule.scheduledMuted(at: Self.at("2026-09-21 09:00"), windows: mixed, timeZone: Self.et) == false)
+        mixed.append(MuteWindow(days: [2], start: "09:00", end: "11:00"))
+        #expect(MuteSchedule.scheduledMuted(at: Self.at("2026-09-21 09:00"), windows: mixed, timeZone: Self.et) == true)
+        #expect(MuteSchedule.nextTransition(after: Self.at("2026-09-21 07:00"), windows: mixed, timeZone: Self.et)
+            == Self.at("2026-09-21 09:00")) // 08:00 boundary of the disabled window skipped
+    }
+
+    @Test func enabledFlagDecodesTrueWhenMissing() throws {
+        // Entries stored before `enabled` existed load as enabled.
+        let json = #"{"muteWindows":[{"days":[2],"start":"09:00","end":"10:00"}]}"#
+        let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
+        #expect(c.muteWindows == [MuteWindow(days: [2], start: "09:00", end: "10:00", enabled: true)])
+        // ... and an explicit false round-trips.
+        let off = #"{"muteWindows":[{"days":[2],"start":"09:00","end":"10:00","enabled":false}]}"#
+        let back = try JSONDecoder().decode(Config.self, from: Data(off.utf8))
+        #expect(back.muteWindows.first?.enabled == false)
+        let rt = try JSONDecoder().decode(Config.self, from: JSONEncoder().encode(back))
+        #expect(rt.muteWindows.first?.enabled == false)
+    }
+
+    @Test func daysLabelAndSummary() {
+        #expect(MuteWindow(days: [2, 3, 4, 5, 6], start: "16:40", end: "24:00").daysLabel == "Mon–Fri")
+        #expect(MuteWindow(days: [1, 7], start: "00:00", end: "24:00").daysLabel == "Sun, Sat")
+        #expect(MuteWindow(days: [4], start: "09:00", end: "10:00").daysLabel == "Wed")
+        #expect(MuteWindow(days: [6, 2, 6], start: "09:00", end: "10:00").daysLabel == "Mon, Fri")
+        #expect(MuteWindow(days: [], start: "09:00", end: "10:00").daysLabel == "—")
+        #expect(MuteWindow(days: [2, 3, 4, 5, 6], start: "16:40", end: "24:00").summary == "Mon–Fri 16:40–24:00")
     }
 }
