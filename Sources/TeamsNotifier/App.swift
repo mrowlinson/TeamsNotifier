@@ -132,6 +132,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if config.didMigrateSchedule {
             Log.info("migrated owner schedule (\(config.muteWindows.count) entries) to \(flags.configPath)")
         }
+        for w in config.normalizeRules() { Log.fault(w) }
+        if config.didMigrateRules {
+            Log.info("migrated legacy settings to \(config.notifyRules.count) notify rules (\(flags.configPath))")
+        }
         if let tz = TimeZone(identifier: config.scheduleTZ) {
             scheduleTimeZone = tz
         } else {
@@ -407,6 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(mute)
         muteMenuItem = mute
         menu.addItem(NSMenuItem(title: "Edit schedule…", action: #selector(menuEditSchedule), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Edit rules…", action: #selector(menuEditRules), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show log", action: #selector(menuShowLog), keyEquivalent: ""))
@@ -572,6 +577,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             Log.info("schedule saved (\(windows.count) entries, \(windows.filter(\.enabled).count) on)")
             self.refreshMuteUI(now: Date())
+        }
+    }
+
+    @objc private func menuEditRules() {
+        RulesWindowController.show(current: config.notifyRules) { [weak self] rules in
+            guard let self else { return }
+            self.config.notifyRules = rules
+            self.config.rulesStored = true
+            self.config.didMigrateRules = false
+            self.config.applyRules()
+            do {
+                try self.config.save(to: self.flags.configPath)
+            } catch {
+                Log.fault("rules save failed (\(self.flags.configPath)): \(error)")
+            }
+            Log.info("rules saved (\(rules.count) rules, \(rules.filter(\.enabled).count) on)")
         }
     }
 

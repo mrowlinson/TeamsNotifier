@@ -49,6 +49,25 @@ public struct Config: Codable, Sendable {
     /// absent) to the owner schedule. Not encoded. The app logs it; load
     /// already persisted the migrated entries back to the store.
     public var didMigrateSchedule: Bool = false
+    /// Notify/skip rules (the extensible store behind ChatFilter's gates).
+    /// Fresh installs keep this BLANK; configs that predate the rules key
+    /// migrate the legacy scalars on first load (see didMigrateRules).
+    /// Edited in the GUI (menu Edit rules) and persisted to this file.
+    /// Whenever the key is present, the legacy scalars below are synced
+    /// FROM these rules on decode (first match per kind wins; unknown
+    /// kinds preserved but not enforced).
+    public var notifyRules: [NotifyRule]
+    /// Issues seen while decoding the rules key. Not encoded. Drained by
+    /// normalizeRules() into fault-log lines.
+    public var rulesDecodeIssues: [String] = []
+    /// True when this load migrated legacy scalars to notifyRules (key
+    /// absent). Not encoded. The app logs it; load already persisted the
+    /// migrated rules back to the store.
+    public var didMigrateRules: Bool = false
+    /// True when the decoded JSON carried the notifyRules key (even an
+    /// empty list: stored-empty is a deliberate "notify everything").
+    /// Not encoded. Fresh Config() values report false.
+    public var rulesStored: Bool = false
 
     public init(
         owner: Owner = Owner(),
@@ -58,7 +77,8 @@ public struct Config: Codable, Sendable {
         notifyTypes: [String] = ["Text", "RichText"],
         muted: Bool = false,
         muteWindows: [MuteWindow] = [],
-        scheduleTZ: String = MuteSchedule.defaultTimeZoneID
+        scheduleTZ: String = MuteSchedule.defaultTimeZoneID,
+        notifyRules: [NotifyRule] = []
     ) {
         self.owner = owner
         self.loudSubstring = loudSubstring
@@ -68,11 +88,13 @@ public struct Config: Codable, Sendable {
         self.muted = muted
         self.muteWindows = muteWindows
         self.scheduleTZ = scheduleTZ
+        self.notifyRules = notifyRules
     }
 
     enum CodingKeys: String, CodingKey {
         case owner, loudSubstring, notifyOnEdit, skipOwnMessages, notifyTypes, muted
         case muteWindows, scheduleTZ
+        case notifyRules
     }
 
     /// Tolerant decode: configs written before `muted`/`muteWindows` existed
@@ -114,6 +136,64 @@ public struct Config: Codable, Sendable {
         } else {
             scheduleTZ = d.scheduleTZ
         }
+        // Rules key: present-but-undecodable re-migrates from the legacy
+        // scalars (a silent try? would hide owner typos). Absent key =
+        // legacy config from an existing install: migrate the effective
+        // legacy values (NotifyRule.migrate applies the legacy fills).
+        // Fresh installs never decode at all (missing file returns blank
+        // Config.default). Either way the scalars end up synced from the
+        // rules, so ChatFilter (which reads the scalars) sees one source.
+        rulesDecodeIssues = []
+        if c.contains(.notifyRules) {
+            do {
+                notifyRules = try c.decodeIfPresent([NotifyRule].self, forKey: .notifyRules) ?? []
+            } catch {
+                notifyRules = NotifyRule.migrate(
+                    skipOwn: skipOwnMessages, notifyOnEdit: notifyOnEdit,
+                    types: notifyTypes, loud: loudSubstring)
+                rulesDecodeIssues.append("bad notifyRules (undecodable JSON, want [{kind,value,enabled}]), re-migrated from legacy settings")
+            }
+            rulesStored = true
+            didMigrateRules = false
+        } else {
+            notifyRules = NotifyRule.migrate(
+                skipOwn: skipOwnMessages, notifyOnEdit: notifyOnEdit,
+                types: notifyTypes, loud: loudSubstring)
+            rulesStored = false
+            didMigrateRules = true
+        }
+        applyRules()
+    }
+
+    /// Sync the legacy filter scalars FROM the stored rules. Total: every
+    /// known kind resolves here (first match wins), so after this call
+    /// the scalars reflect exactly what the list says. Absent/disabled
+    /// known rules switch their gate off (allow-types then allows every
+    /// type via the "*" marker). Unknown kinds are preserved untouched.
+    public mutating func applyRules() {
+        if let r = notifyRules.first(where: { $0.kind == NotifyRule.skipOwn }) {
+            skipOwnMessages = r.enabled
+        } else {
+            skipOwnMessages = false
+        }
+        if let r = notifyRules.first(where: { $0.kind == NotifyRule.skipEdits }) {
+            notifyOnEdit = !r.enabled
+        } else {
+            notifyOnEdit = true
+        }
+        if let r = notifyRules.first(where: { $0.kind == NotifyRule.loudChat }),
+           r.enabled, !r.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            loudSubstring = r.value
+        } else {
+            loudSubstring = ""
+        }
+        if let r = notifyRules.first(where: { $0.kind == NotifyRule.allowTypes }), r.enabled {
+            let types = NotifyRule.parseTypes(r.value)
+            notifyTypes = types.isEmpty ? [NotifyRule.allowAllMarker] : types
+        } else {
+            notifyTypes = [NotifyRule.allowAllMarker]
+        }
     }
 
     /// Replace invalid schedule pieces with defaults. Returns fault-log lines
@@ -138,6 +218,28 @@ public struct Config: Codable, Sendable {
         return warnings
     }
 
+    /// Drop unusable rules (no kind; known kind with a blank value where
+    /// one is required). Returns fault-log lines. Unknown kinds are kept
+    /// (extensible payload). Decode issues drain once. No re-sync needed:
+    /// applyRules() already treats blank values as gate-off, so dropping
+    /// changes nothing effective.
+    @discardableResult
+    public mutating func normalizeRules() -> [String] {
+        var warnings = rulesDecodeIssues
+        rulesDecodeIssues = []
+        var kept: [NotifyRule] = []
+        kept.reserveCapacity(notifyRules.count)
+        for r in notifyRules {
+            if let problem = r.issue() {
+                warnings.append("bad notifyRules (\(problem), rule \(r.kind.isEmpty ? "(no type)" : r.kind), dropped)")
+            } else {
+                kept.append(r)
+            }
+        }
+        notifyRules = kept
+        return warnings
+    }
+
     public static var `default`: Config {
         Config(owner: Owner(displayName: "Michael Rowlinson"))
     }
@@ -147,23 +249,33 @@ public struct Config: Codable, Sendable {
     }
 
     /// Load from path; missing file yields a FRESH config with an empty
-    /// schedule (zero seeded entries). An existing file whose JSON lacks
-    /// the schedule keys migrates the owner entries AND persists them
-    /// back to the store (best-effort: a failed write keeps the file as
-    /// it was while the in-memory schedule is still migrated).
+    /// schedule (zero seeded entries) and BLANK rules. An existing file
+    /// whose JSON lacks the schedule/rules keys migrates them AND persists
+    /// them back to the store (best-effort: a failed write keeps the file
+    /// as it was while the in-memory values are still migrated).
     public static func load(from path: String) throws -> Config {
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: url.path) else {
             var fresh = Config.default
             fresh.muteWindows = []
+            fresh.notifyRules = []
+            // Blank rules = notify everything (same sync the decode
+            // path runs): without this the legacy-fill scalars from
+            // Config.default would filter while the GUI shows blank.
+            fresh.applyRules()
             return fresh
         }
         let data = try Data(contentsOf: url)
         var cfg = try JSONDecoder().decode(Config.self, from: data)
         if cfg.owner.displayName.isEmpty { cfg.owner.displayName = Config.default.owner.displayName }
-        if cfg.loudSubstring.isEmpty { cfg.loudSubstring = "BTAC" }
-        if cfg.notifyTypes.isEmpty { cfg.notifyTypes = ["Text", "RichText"] }
-        if cfg.didMigrateSchedule {
+        // Legacy fills only when the rules key is absent: with stored
+        // rules the scalars already reflect the list (a blank loud there
+        // is a deliberate gate-off, not a gap to re-seed).
+        if !cfg.rulesStored {
+            if cfg.loudSubstring.isEmpty { cfg.loudSubstring = "BTAC" }
+            if cfg.notifyTypes.isEmpty { cfg.notifyTypes = ["Text", "RichText"] }
+        }
+        if cfg.didMigrateSchedule || cfg.didMigrateRules {
             try? cfg.save(to: path)
         }
         return cfg

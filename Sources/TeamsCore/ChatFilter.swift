@@ -6,7 +6,8 @@
 ///   (schedule + memory-only manual override) before calling decide.
 /// - Own messages: skipped (when skipOwnMessages).
 /// - Non-text types (Control/Typing, ThreadActivity, ...): skipped unless
-///   listed in notifyTypes.
+///   listed in notifyTypes. A "*" entry (written when the allow-types
+///   rule is absent/disabled) allows every type.
 /// - Edits (MessageUpdate): skipped unless notifyOnEdit.
 /// - Chats whose display name contains loudSubstring (case-insensitive):
 ///   notify ONLY on owner mention (MRI preferred, display-name fallback) or
@@ -39,7 +40,9 @@ public enum ChatFilter {
         }
         // Type gate on first messagetype segment (Text, RichText, Control, ...).
         let head = message.messageType.split(separator: "/").first.map(String.init) ?? message.messageType
-        if !config.notifyTypes.contains(where: { $0.caseInsensitiveCompare(head) == .orderedSame }) {
+        if !config.notifyTypes.contains(NotifyRule.allowAllMarker),
+           !config.notifyTypes.contains(where: { $0.caseInsensitiveCompare(head) == .orderedSame })
+        {
             return .skip(reason: "type:\(head)")
         }
         // Edits.
