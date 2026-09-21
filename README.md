@@ -1,0 +1,109 @@
+# TeamsNotifier
+
+Menu-bar-only macOS app that posts native notifications for Teams chat
+messages. No browser, no WebView, no OCR: user-delegated auth, realtime
+over the trouter websocket (same channel the official client uses), chat
+names via chat REST.
+
+Why: the Teams desktop client is heavy and its notifications are
+unreliable; this is a 652KB single binary idling at ~12MB footprint.
+
+## Status
+
+Parsers, filter, framing, auth plumbing, and notifications are built and
+unit-tested (66 tests green). Live auth + realtime against the owner's
+work tenant is **not yet validated** — owner runs Setup below and reports
+back. Internal Teams APIs can drift; failures are loud (see Limits).
+
+## Setup (owner steps)
+
+1. Build + install:
+   `Scripts/package.sh --install`
+2. Launch `/Applications/TeamsNotifier.app` (`TN` appears in menu bar).
+3. Browser opens to Microsoft sign-in. Sign in with the **work** account
+   (interactive + MFA/CA fine). Tab shows "Signed in to Teams Notifier";
+   close it. No tokens touch disk except the refresh token (Keychain,
+   `com.teamsnotifier.tokens`).
+4. Allow notifications when prompted. For sticky banners: System Settings
+   > Notifications > TeamsNotifier > Banner style **Alerts**.
+5. Menu `TN` should show `connected`. Send yourself a Teams message from
+   another device, or have someone message you; a notification appears.
+   Click a notification copies its body to clipboard (no GUI to open).
+6. Optional config `~/.config/teamsnotifier/config.json`:
+   ```json
+   {"owner":{"displayName":"Michael Rowlinson","upn":"you@company.com","mri":""},
+    "loudSubstring":"BTAC","notifyOnEdit":false,"skipOwnMessages":true,
+    "notifyTypes":["Text","RichText"]}
+   ```
+   `upn` enables a wrong-account warning. `mri` is auto-learned from the
+   sign-in token when empty (preferred mention signal).
+7. Optional start-at-login: `Scripts/install-launch-agent.sh`
+   (logs to `/tmp/teamsnotifier.log`).
+
+If the browser flow fails, the app offers a manual flow: it opens the
+sign-in page, you paste the redirect URL back
+(`http://127.0.0.1:8765/callback?code=...`, connection-refused page is
+expected — the `?code=` in the address bar is what matters).
+
+Useful flags: `--verbose` (debug to stderr), `--notify-test`,
+`--sign-in`, `--sign-out`, `--offline` (menu only, no network), `--help`.
+
+## Knobs
+
+- `loudSubstring` (default `BTAC`): chats whose display name contains it
+  (case-insensitive) notify ONLY on owner mention (MRI match preferred,
+  display-name fallback) or channel/Everyone mention. All other chats
+  always notify. Empty string disables the rule.
+- `notifyTypes`: messagetype heads that notify (`Text`, `RichText`).
+  Typing indicators, member-join activity, calls never notify.
+- `notifyOnEdit` (default false): also notify on MessageUpdate edits.
+- `skipOwnMessages` (default true).
+
+## How it works
+
+- Auth: system browser -> AAD `organizations` authorize (Teams desktop
+  public client `1fec8e78-...`, PKCE S256, loopback redirect) -> token
+  endpoint (scope `https://api.spaces.skype.com/.default openid profile
+  offline_access`) -> `POST teams.microsoft.com/api/authsvc/v1.0/authz`
+  exchanges AAD token for skype token + regionGtms. Owner MRI/UPN learned
+  from token claims. Refresh token in Keychain; expiry posts "sign-in
+  needed" and reopens sign-in. No app registration, no admin consent.
+  DISCLOSURE: reuses Microsoft's public Teams client ID (same pattern as
+  purple-teams, ost). ASWebAuthenticationSession was specced but cannot
+  work here (needs a custom scheme registered on the OAuth client, which
+  we don't own); system browser + RFC 8252 loopback is the working shape.
+- Realtime: `POST go.trouter.teams.microsoft.com/v4/a` ->
+  socket.io session GET -> `URLSessionWebSocketTask` -> `user.authenticate`
+  + `user.activity` -> registrar (NextGenCalling, SkypeSpacesWeb,
+  TeamsCDLWebWorker) -> ping every 30s, ack every `3:::` frame, reconnect
+  with backoff, re-register on `trouter.message_loss`.
+- Messages: `/messaging` frames only, `NewMessage` resourceType, gzip/cp/gp
+  decode, dedup ring (10), HTML stripped to plain text, mentions from
+  `properties.mentions` (content-span fallback), chat names from
+  `threadtopic` or `GET {chatService}/v1/users/ME/conversations/{id}`.
+
+Protocol sources: EionRobb/purple-teams, eisbaw/ost, agent-messenger
+trouter (PR #281), weirdapps/teams-access, roshank8s/teams-api,
+dinhhant9/teams_lite. See `Sources/TeamsCore/Constants.swift` + per-file
+headers for exact endpoint/scope provenance.
+
+## Measured footprint (release, idle, connected-path untested)
+
+- Binary 652KB, zero third-party deps (SwiftPM, AppKit/Foundation only).
+- Idle: RSS ~54MB, `footprint` phys ~12MB, CPU 0.0% (`--offline`, 10s+).
+- Target was <60MB / ~0 CPU: met on both RSS and footprint.
+
+## Limits / risks
+
+- Internal, undocumented Teams APIs: Microsoft can change endpoints,
+  headers, token audiences, or block the reused client ID at any time.
+  Failures are loud: `FAULT` lines in stderr/log, menu status shows
+  retry state, auth death posts a notification and reopens sign-in.
+- ToS gray area: read-only access to your own data via internal APIs,
+  same as the referenced OSS clients. Owner's call.
+- Live path (sign-in, trouter events, chat REST, notification delivery
+  from installed bundle) validated by owner, not by the agent.
+- Direct-binary launch showed a notification-auth refusal in testing;
+  install to /Applications and launch via Finder/`open` before judging.
+- Channel vs group-chat threading: notification titles use the chat
+  topic when Teams provides one, else member name, else thread id.

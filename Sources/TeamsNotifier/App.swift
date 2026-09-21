@@ -14,6 +14,7 @@ struct Flags {
     var notifyTest = false
     var signIn = false
     var signOut = false
+    var offline = false
     var help = false
 
     static func parse(_ args: [String]) -> Flags {
@@ -30,6 +31,7 @@ struct Flags {
             case "--notify-test": f.notifyTest = true
             case "--sign-in": f.signIn = true
             case "--sign-out": f.signOut = true
+            case "--offline": f.offline = true
             case "--help", "-h": f.help = true
             default: fputs("unknown flag: \(args[i])\n", stderr)
             }
@@ -51,6 +53,7 @@ struct Flags {
       --notify-test   post a test notification and keep running
       --sign-in       force interactive sign-in on launch
       --sign-out      clear Keychain tokens and exit
+      --offline       menu bar only, no auth or connection (smoke test)
       --help, -h      this text
     """
 }
@@ -60,6 +63,17 @@ struct Flags {
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// No nib wires the delegate, so do it in main (NSApp.delegate is weak).
+    private static var keeper: AppDelegate?
+
+    static func main() {
+        let delegate = AppDelegate()
+        keeper = delegate
+        let app = NSApplication.shared
+        app.delegate = delegate
+        app.run()
+    }
+
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var flags = Flags()
@@ -121,6 +135,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await self?.handleNeedsSignIn(reason: reason) }
         }
 
+        if flags.offline {
+            setStatus("offline (smoke test)")
+            Log.info("offline mode: no auth, no connection")
+            return
+        }
         let authed = await auth.hasRefreshToken
         if flags.signIn || !authed {
             await interactiveSignIn()
