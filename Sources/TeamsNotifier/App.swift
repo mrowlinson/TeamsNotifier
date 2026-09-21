@@ -569,8 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuShowHistory() {
-        HistoryStore.ensureFileExists()
-        NSWorkspace.shared.open(HistoryStore.historyFileURL)
+        HistoryWindowController.show()
     }
 
     // MARK: History retention
