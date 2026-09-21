@@ -72,8 +72,9 @@ struct NotifyRulesTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.loudSubstring == "")
         #expect(c.notifyTypes == [NotifyRule.allowAllMarker])
-        #expect(c.noisyChannelMentions == false)
-        #expect(c.matchByDisplayName == false)
+        // Absent new-kind rules default ON (harmless: no noisy chats).
+        #expect(c.noisyChannelMentions == true)
+        #expect(c.matchByDisplayName == true)
         let d = ChatFilter.decide(
             message: message(), isEdit: false, chatDisplayName: "Alice",
             ownerMRI: ownerMRI, config: c)
@@ -190,8 +191,11 @@ struct NotifyRulesTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.loudSubstring == "")
         #expect(c.notifyTypes == ["*"])
-        #expect(c.noisyChannelMentions == false)
-        #expect(c.matchByDisplayName == false)
+        // Absent new-kind rules default ON (hardcoded pre-rules
+        // behavior), yet everything still notifies: no noisy-chats rule
+        // means no noisy chats exist for those gates to constrain.
+        #expect(c.noisyChannelMentions == true)
+        #expect(c.matchByDisplayName == true)
         // Everything notifies: own, edit, control type, bare loud chat.
         let cases: [(EventMessage.Message, Bool, String)] = [
             (message(senderMRI: ownerMRI, senderName: ownerName), false, "Alice"),

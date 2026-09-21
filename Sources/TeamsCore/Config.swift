@@ -182,8 +182,11 @@ public struct Config: Codable, Sendable {
     /// Sync the legacy filter scalars FROM the stored rules. Total: every
     /// known kind resolves here (first match wins), so after this call
     /// the scalars reflect exactly what the list says. Absent/disabled
-    /// known rules switch their gate off (message-types then allows every
-    /// type via the "*" marker). Unknown kinds are preserved untouched.
+    /// rules switch their gate off (message-types then allows every
+    /// type via the "*" marker) — EXCEPT noisy-chats-channel-mentions
+    /// and my-name-as-backup, whose ABSENT default is ON (the hardcoded
+    /// pre-rules behavior): only a present disabled rule turns them off.
+    /// Unknown kinds are preserved untouched.
     public mutating func applyRules() {
         // Canonical matching: in-memory legacy ids (never from decode,
         // which maps them) still resolve to their replacement's gate.
@@ -213,15 +216,19 @@ public struct Config: Codable, Sendable {
         } else {
             notifyTypes = [NotifyRule.allowAllMarker]
         }
+        // Absent = ON (hardcoded pre-rules behavior): pre-rename rule
+        // lists carry neither kind, and must not silently lose them.
+        // Deleting the rule in the GUI likewise reverts to ON; only a
+        // present disabled rule switches the gate off (explicit wins).
         if let r = first(NotifyRule.noisyChannel) {
             noisyChannelMentions = r.enabled
         } else {
-            noisyChannelMentions = false
+            noisyChannelMentions = true
         }
         if let r = first(NotifyRule.nameBackup) {
             matchByDisplayName = r.enabled
         } else {
-            matchByDisplayName = false
+            matchByDisplayName = true
         }
     }
 

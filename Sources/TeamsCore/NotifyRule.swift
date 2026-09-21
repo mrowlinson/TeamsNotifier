@@ -14,8 +14,10 @@ import Foundation
 /// - `enabled`: per-rule on/off switch. A disabled (or absent) known
 ///   rule switches its gate off: own messages and edits notify, the
 ///   noisy rule stops matching, message-types allows every type (stored
-///   in the legacy scalar as `allowAllMarker`), noisy channel mentions
-///   stop notifying, name matching goes IDs-only.
+///   in the legacy scalar as `allowAllMarker`). Exception: an ABSENT
+///   noisy-chats-channel-mentions / my-name-as-backup rule leaves its
+///   gate ON (the hardcoded pre-rules behavior); only a present
+///   disabled rule turns those two off.
 ///
 /// Config migrates legacy scalars to these rules on first load of a
 /// pre-rules file (existing installs keep their exact effective
@@ -63,11 +65,14 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     /// channel/Everyone mention.
     public static let noisyChats = "noisy-chats-mention-only"
     /// In noisy chats, channel/@team/@everyone mentions also notify.
-    /// Absent/disabled = only direct owner mentions notify there. Value
-    /// ignored.
+    /// Absent = ON (hardcoded pre-rules behavior; deleting the rule
+    /// reverts to ON). Disabled = only direct owner mentions notify
+    /// there. Value ignored.
     public static let noisyChannel = "noisy-chats-channel-mentions"
     /// When Teams omits sender/mention IDs, fall back to comparing the
-    /// owner's display name. Absent/disabled = IDs only. Value ignored.
+    /// owner's display name. Absent = ON (hardcoded pre-rules behavior;
+    /// deleting the rule reverts to ON). Disabled = IDs only. Value
+    /// ignored.
     public static let nameBackup = "my-name-as-backup"
 
     /// Known ids, in migration order. The set is open: the GUI kind field
@@ -102,8 +107,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case messageTypes: "Value: message types that notify, e.g. Text, RichText. Off: every type notifies (typing, member notices, calls too)."
         case skipEdited: "On: skip edited messages. Off: edits notify. Value ignored."
         case noisyChats: "Value: chat-name text, e.g. BTAC. Matching chats notify only when you are mentioned."
-        case noisyChannel: "On: @channel/@team/@everyone also notify in noisy chats. Off: only your direct mentions do. Value ignored."
-        case nameBackup: "On: when Teams omits sender/mention IDs, match by your display name. Off: IDs only. Value ignored."
+        case noisyChannel: "On: @channel/@team/@everyone also notify in noisy chats. Off: only your direct mentions do. Deleting this rule turns it back on. Value ignored."
+        case nameBackup: "On: when Teams omits sender/mention IDs, match by your display name. Off: IDs only. Deleting this rule turns it back on. Value ignored."
         default: "Custom type: stored and round-tripped, not enforced yet."
         }
     }

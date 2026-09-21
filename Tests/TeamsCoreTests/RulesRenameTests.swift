@@ -117,9 +117,10 @@ struct RulesRenameTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.notifyTypes == ["Text", "RichText"])
         #expect(c.loudSubstring == "BTAC")
-        // New gates absent in an old file: strict (IDs-only, owner-only).
-        #expect(c.noisyChannelMentions == false)
-        #expect(c.matchByDisplayName == false)
+        // New gates absent in an old file: ON (hardcoded pre-rules
+        // behavior), not strict.
+        #expect(c.noisyChannelMentions == true)
+        #expect(c.matchByDisplayName == true)
     }
 
     @Test func oldKindsBehaviorIdenticalToCanonical() throws {
@@ -277,11 +278,11 @@ struct RulesRenameTests {
         let absent = cfg(nil)
         #expect(on.noisyChannelMentions == true)
         #expect(off.noisyChannelMentions == false)
-        #expect(absent.noisyChannelMentions == false)
+        #expect(absent.noisyChannelMentions == true)
         let ch = message(mentions: [channelMention()])
         #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: on) == .notify(reason: "loud-channel-mention"))
         #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .skip(reason: "loud-no-mention"))
-        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: absent) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: absent) == .notify(reason: "loud-channel-mention"))
         // Direct owner mention still notifies with the channel gate off.
         let own = message(mentions: [ownerMention()])
         #expect(ChatFilter.decide(message: own, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .notify(reason: "loud-owner-mention"))
@@ -302,7 +303,7 @@ struct RulesRenameTests {
         let named = message(mentions: [nameOnlyOwnerMention()])
         #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: on) == .notify(reason: "loud-owner-mention"))
         #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .skip(reason: "loud-no-mention"))
-        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: absent) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: absent) == .notify(reason: "loud-owner-mention"))
         // MRI mention still notifies with the backup off (IDs only).
         let mri = message(mentions: [ownerMention()])
         #expect(ChatFilter.decide(message: mri, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .notify(reason: "loud-owner-mention"))
@@ -317,11 +318,12 @@ struct RulesRenameTests {
         let on = cfg(NotifyRule(kind: NotifyRule.nameBackup, enabled: true))
         let off = cfg(NotifyRule(kind: NotifyRule.nameBackup, enabled: false))
         let absent = cfg(nil)
-        // Sender ID missing: name match skips only with the backup on.
+        // Sender ID missing: name match skips with the backup on or
+        // absent (absent defaults ON); only explicit off notifies.
         let nameless = message(senderMRI: nil, senderName: ownerName)
         #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: on) == .skip(reason: "own-message"))
         #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: off) == .notify(reason: "chat-message"))
-        #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: absent) == .notify(reason: "chat-message"))
+        #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: absent) == .skip(reason: "own-message"))
         // MRI match still skips with the backup off.
         let mri = message(senderMRI: ownerMRI, senderName: ownerName)
         #expect(ChatFilter.decide(message: mri, isEdit: false, chatDisplayName: "Alice", ownerMRI: ownerMRI, config: off) == .skip(reason: "own-message"))
@@ -344,9 +346,13 @@ struct RulesRenameTests {
     }
 
     @Test func freshBlankNotifiesThroughoutNewGates() {
-        // Blank rules: every gate off; even name-only/channel cases notify
-        // (no noisy chats exist to constrain them).
+        // Blank rules: new gates read ON (absent default) but never fire
+        // (no noisy-chats rule, so loudSubstring is empty and no chat is
+        // noisy); everything notifies.
         let blank = config(rules: [])
+        #expect(blank.noisyChannelMentions == true)
+        #expect(blank.matchByDisplayName == true)
+        #expect(blank.loudSubstring == "")
         for m in [message(mentions: [nameOnlyOwnerMention()]), message(mentions: [channelMention()])] {
             let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: blank)
             #expect(d == .notify(reason: "chat-message"))
@@ -354,6 +360,99 @@ struct RulesRenameTests {
         let own = message(senderMRI: nil, senderName: ownerName)
         let d = ChatFilter.decide(message: own, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: blank)
         #expect(d == .notify(reason: "chat-message"))
+    }
+
+    // MARK: (d) absent-defaults regression (4-rule owner file)
+
+    /// Owner 4-rule file (exact shape): both new gates load ON, and
+    /// every decision matches the pre-rename hardcoded behavior (both
+    /// gates hardcoded on, scalars set directly without applyRules).
+    @Test func ownerFourRuleFileKeepsHardcodedGates() throws {
+        let ownerJSON = """
+        {"owner":{"mri":"","displayName":"Michael Rowlinson","upn":""},
+        "notifyRules":[{"kind":"skip-own","value":"","enabled":true},
+        {"kind":"allow-types","value":"Text, RichText","enabled":true},
+        {"kind":"skip-edits","value":"","enabled":true},
+        {"kind":"loud-chat","value":"BTAC","enabled":true}],
+        "scheduleTZ":"America/New_York","skipOwnMessages":true,"muted":false,
+        "notifyOnEdit":false,"loudSubstring":"BTAC",
+        "muteWindows":[{"days":[2,3,4,5,6],"enabled":true,"start":"16:40","end":"24:00"}],
+        "notifyTypes":["Text","RichText"]}
+        """
+        let loaded = try JSONDecoder().decode(Config.self, from: Data(ownerJSON.utf8))
+        #expect(loaded.noisyChannelMentions == true)
+        #expect(loaded.matchByDisplayName == true)
+        // Pre-rename hardcoded behavior: same scalars, both gates on.
+        var hard = Config.default
+        hard.skipOwnMessages = true
+        hard.notifyOnEdit = false
+        hard.notifyTypes = ["Text", "RichText"]
+        hard.loudSubstring = "BTAC"
+        hard.noisyChannelMentions = true
+        hard.matchByDisplayName = true
+        expectSameDecisions(loaded, hard)
+        // Spot checks: channel mention in a noisy chat notifies, and
+        // the display-name backup matches at both call sites.
+        let ch = message(mentions: [channelMention()])
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: loaded) == .notify(reason: "loud-channel-mention"))
+        let named = message(mentions: [nameOnlyOwnerMention()])
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: loaded) == .notify(reason: "loud-owner-mention"))
+        let nameless = message(senderMRI: nil, senderName: ownerName)
+        #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: loaded) == .skip(reason: "own-message"))
+    }
+
+    /// Present + disabled new-kind rules switch the gates off (explicit
+    /// choice wins over the absent-ON default).
+    @Test func explicitDisabledNewKindsSwitchGatesOff() {
+        let c = config(rules: [
+            NotifyRule(kind: NotifyRule.skipMyMessages, enabled: true),
+            NotifyRule(kind: NotifyRule.messageTypes, value: "Text, RichText", enabled: true),
+            NotifyRule(kind: NotifyRule.skipEdited, enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChannel, enabled: false),
+            NotifyRule(kind: NotifyRule.nameBackup, enabled: false),
+        ])
+        #expect(c.noisyChannelMentions == false)
+        #expect(c.matchByDisplayName == false)
+        let ch = message(mentions: [channelMention()])
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: c) == .skip(reason: "loud-no-mention"))
+        let named = message(mentions: [nameOnlyOwnerMention()])
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: c) == .skip(reason: "loud-no-mention"))
+        let nameless = message(senderMRI: nil, senderName: ownerName)
+        #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: c) == .notify(reason: "chat-message"))
+    }
+
+    /// Fresh blank: permissive throughout (every case notifies), even
+    /// though the absent new-kind gates read ON — harmless, because no
+    /// noisy-chats rule means no chat is noisy.
+    @Test func freshBlankPermissiveThroughout() {
+        let blank = config(rules: [])
+        #expect(blank.noisyChannelMentions == true)
+        #expect(blank.matchByDisplayName == true)
+        #expect(blank.loudSubstring == "")
+        let cases: [(EventMessage.Message, Bool, String)] = [
+            (message(), false, "Alice"),
+            (message(senderMRI: ownerMRI, senderName: ownerName), false, "Alice"),
+            (message(senderMRI: nil, senderName: ownerName), false, "Alice"),
+            (message(type: "Control/Typing"), false, "Alice"),
+            (message(), true, "Alice"),
+            (message(), false, "BTAC War Room"),
+            (message(mentions: [ownerMention()]), false, "BTAC War Room"),
+            (message(mentions: [nameOnlyOwnerMention()]), false, "BTAC War Room"),
+            (message(mentions: [channelMention()]), false, "BTAC War Room"),
+        ]
+        for (m, isEdit, chat) in cases {
+            let d = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chat, ownerMRI: ownerMRI, config: blank)
+            #expect(d == .notify(reason: "chat-message"), "chat \(chat) edit=\(isEdit) type=\(m.messageType)")
+        }
+    }
+
+    /// Hint text tells the owner that deleting these two rules turns
+    /// them back on (the GUI Remove button deletes any row, stock
+    /// included, and absent means ON).
+    @Test func deletedNewKindHintSaysRevertsOn() {
+        #expect(NotifyRule.hint(for: NotifyRule.noisyChannel).contains("Deleting this rule turns it back on"))
+        #expect(NotifyRule.hint(for: NotifyRule.nameBackup).contains("Deleting this rule turns it back on"))
     }
 
     // MARK: GUI chrome helpers

@@ -57,8 +57,9 @@ struct MigrateFixTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.loudSubstring == "")
         #expect(c.notifyTypes == [NotifyRule.allowAllMarker])
-        #expect(c.noisyChannelMentions == false)
-        #expect(c.matchByDisplayName == false)
+        // Absent new-kind rules default ON (harmless: no noisy chats).
+        #expect(c.noisyChannelMentions == true)
+        #expect(c.matchByDisplayName == true)
         // Fresh load writes nothing.
         #expect(FileManager.default.fileExists(atPath: missing) == false)
 
