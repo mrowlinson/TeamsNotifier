@@ -392,21 +392,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateIcon()
     }
 
-    /// Menu-bar icon (SF Symbol, no assets): bell normally, bell.badge on
-    /// unread message notifications, bell.slash when delivery is blocked or
-    /// switched off in Settings. Falls back to "TN" text if symbols fail.
+    /// Menu-bar icon (code-drawn, no assets): purple T-bubble normally,
+    /// orange dot on unread message notifications, desaturated bubble +
+    /// slash when delivery is blocked or switched off in Settings. Falls
+    /// back to "TN" text if image init ever fails.
     private func updateIcon() {
-        let name: String
-        if notifyOff || NotificationAuth.isBlocked(rawValue: notifyRawValue) {
-            name = "bell.slash"
-        } else if hasUnread {
-            name = "bell.badge"
-        } else {
-            name = "bell"
-        }
         guard let button = statusItem?.button else { return }
-        if let img = NSImage(systemSymbolName: name, accessibilityDescription: "TeamsNotifier") {
-            img.isTemplate = true
+        let variant = MenuIcon.select(
+            notifyOff: notifyOff,
+            blocked: NotificationAuth.isBlocked(rawValue: notifyRawValue),
+            hasUnread: hasUnread)
+        if let img = MenuIconImage.image(for: variant) {
             button.image = img
             button.title = ""
         } else {
