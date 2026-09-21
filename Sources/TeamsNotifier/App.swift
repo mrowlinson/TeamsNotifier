@@ -57,7 +57,7 @@ struct Flags {
       --upn UPN       owner work UPN (expected, matched against token)
       --mri MRI       owner Skype MRI 8:orgid:... (auto-learned if empty)
       --loud SUBSTR   loud-chat substring (default BTAC)
-      --verbose, -v   debug logging to stderr
+      --verbose, -v   debug logging (stderr + log file)
       --notify-test   post a test notification and keep running
       --sign-in       force interactive sign-in on launch
       --sign-out      clear Keychain tokens and exit
@@ -85,6 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var baseStatus = "starting…"
+    private var notifyRawValue: Int = 0 // undetermined until fetched
+    private var lastTrouterState = "starting"
     private var flags = Flags()
     private var config = Config.default
     private var auth = AuthManager()
@@ -95,6 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory) // menu-bar only, no dock icon
         flags = Flags.parse(CommandLine.arguments)
         Log.verbose = flags.verbose
+        Log.setupFileLogging()
+        Log.info("launching (log: \(Log.logFileURL.path))")
 
         if flags.help {
             print(Flags.usage)
@@ -135,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let granted = await Notifier.shared.requestAuthorization()
         let authStatus = await Notifier.shared.authorizationStatus()
         Log.info("notification authorization: \(NotificationAuth.label(rawValue: authStatus.rawValue))")
+        setNotifyAuth(authStatus.rawValue)
         if NotificationAuth.isBlocked(rawValue: authStatus.rawValue) {
             setStatus("notifications blocked — enable in Settings")
             Log.fault("notifications blocked; enable in System Settings > Notifications")
@@ -339,34 +345,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Menu
 
     private func setupMenu(status: String) {
+        baseStatus = status
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "TN"
         item.button?.toolTip = "TeamsNotifier"
         let menu = NSMenu()
-        statusMenuItem = NSMenuItem(title: status, action: nil, keyEquivalent: "")
+        statusMenuItem = NSMenuItem(title: renderedStatus(), action: nil, keyEquivalent: "")
         statusMenuItem?.isEnabled = false
         menu.addItem(statusMenuItem!)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show log", action: #selector(menuShowLog), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Copy diagnostics", action: #selector(menuCopyDiagnostics), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(menuQuit), keyEquivalent: "q"))
         for i in menu.items { i.target = self }
         item.menu = menu
         statusItem = item
+        renderStatus()
     }
 
+    /// Single status path: every setStatus renders base + notify auth.
     private func setStatus(_ s: String) {
-        statusMenuItem?.title = s
-        statusItem?.button?.toolTip = "TeamsNotifier: \(s)"
+        baseStatus = s
+        renderStatus()
+    }
+
+    private func setNotifyAuth(_ raw: Int) {
+        notifyRawValue = raw
+        renderStatus()
+    }
+
+    private func renderedStatus() -> String {
+        StatusLine.build(base: baseStatus, notifyRawValue: notifyRawValue)
+    }
+
+    private func renderStatus() {
+        let title = renderedStatus()
+        statusMenuItem?.title = title
+        statusItem?.button?.toolTip = "TeamsNotifier: \(title)"
     }
 
     private func reflect(state: TrouterClient.State) {
+        let base: String
         switch state {
-        case .stopped: setStatus("stopped")
-        case .connecting(let s): setStatus("connecting (\(s))…")
-        case .connected: setStatus("connected")
-        case .backoff(let s): setStatus("retry in \(s)s")
+        case .stopped: base = "stopped"
+        case .connecting(let s): base = "connecting (\(s))…"
+        case .connected: base = "connected"
+        case .backoff(let s): base = "retry in \(s)s"
         }
+        lastTrouterState = base
+        setStatus(base)
     }
 
     @objc private func menuSignIn() {
@@ -375,6 +404,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuTest() {
         Notifier.shared.post(title: "Test sender in Test chat", body: "Hello from TeamsNotifier. Click copies this text.")
+    }
+
+    @objc private func menuShowLog() {
+        NSWorkspace.shared.open(Log.logFileURL)
+    }
+
+    @objc private func menuCopyDiagnostics() {
+        Task {
+            let raw = await Notifier.shared.authorizationStatus().rawValue
+            setNotifyAuth(raw) // refresh stale suffix while here
+            let lines = Log.lastLines(30)
+            let text = StatusLine.diagnostics(
+                authLabel: NotificationAuth.label(rawValue: raw),
+                trouterState: lastTrouterState,
+                lastLines: lines
+            )
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            Log.info("diagnostics copied to clipboard")
+        }
     }
 
     @objc private func menuQuit() {
