@@ -85,8 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var muteMenuItem: NSMenuItem?
     private var baseStatus = "starting…"
     private var notifyRawValue: Int = 0 // undetermined until fetched
+    private var notifyOff = false // per-setting state: off in Settings
+    private var hasUnread = false // cleared when the menu opens
     private var lastTrouterState = "starting"
     private var flags = Flags()
     private var config = Config.default
@@ -138,10 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startup() async {
         let granted = await Notifier.shared.requestAuthorization()
-        let authStatus = await Notifier.shared.authorizationStatus()
-        Log.info("notification authorization: \(NotificationAuth.label(rawValue: authStatus.rawValue))")
-        setNotifyAuth(authStatus.rawValue)
-        if NotificationAuth.isBlocked(rawValue: authStatus.rawValue) {
+        await refreshNotifySettings()
+        let authStatusRaw = notifyRawValue
+        Log.info("notification authorization: \(NotificationAuth.label(rawValue: authStatusRaw))")
+        if NotificationAuth.isBlocked(rawValue: authStatusRaw) {
             setStatus("notifications blocked — enable in Settings")
             Log.fault("notifications blocked; enable in System Settings > Notifications")
         } else if !granted {
@@ -172,15 +175,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // UPN sanity: warn when token owner differs from configured UPN.
         await checkUPN()
+        await auth.startKeepAlive()
 
         api = TeamsAPI(auth: auth)
-        let cfg = config
         let authRef = auth
         let apiRef = api!
         trouter = TrouterClient(
             auth: authRef,
             onMessage: { [weak self] message, isEdit in
-                await self?.handleMessage(message, isEdit: isEdit, api: apiRef, config: cfg)
+                await self?.handleMessage(message, isEdit: isEdit, api: apiRef)
             },
             onState: { [weak self] state in
                 await MainActor.run { self?.reflect(state: state) }
@@ -212,13 +215,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Messages
 
-    private func handleMessage(_ m: EventMessage.Message, isEdit: Bool, api: TeamsAPI, config: Config) async {
+    /// Live self.config (not a startup snapshot): the Mute toggle must
+    /// take effect without relaunch. System notifications bypass this path.
+    private func handleMessage(_ m: EventMessage.Message, isEdit: Bool, api: TeamsAPI) async {
+        let config = self.config
         let ownerMRI = await auth.ownerMRI(configured: config.owner.mri)
         let chatName = await api.chatDisplayName(chatID: m.chatID, threadTopic: m.threadTopic)
         let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config)
         switch decision {
         case .skip(let reason):
-            Log.debug("skip [\(reason)] \(m.senderName) in \(chatName)")
+            if reason == ChatFilter.mutedReason {
+                Log.debug("muted, suppressed \(m.senderName) in \(chatName)")
+            } else {
+                Log.debug("skip [\(reason)] \(m.senderName) in \(chatName)")
+            }
         case .notify(let reason):
             let title: String
             if chatName.isEmpty || chatName == m.chatID {
@@ -227,6 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 title = m.senderName.isEmpty ? chatName : "\(m.senderName) in \(chatName)"
             }
             Log.info("notify [\(reason)] \(title)")
+            hasUnread = true
+            updateIcon()
             Notifier.shared.post(title: title, body: m.plainText, id: m.messageID.isEmpty ? nil : m.messageID)
         }
     }
@@ -246,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try await auth.signInInteractive(method: method)
+            await auth.startKeepAlive()
             setStatus("signed in")
             Log.info("interactive sign-in ok (\(method))")
             if method == .device {
@@ -347,13 +360,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMenu(status: String) {
         baseStatus = status
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "TN"
         item.button?.toolTip = "TeamsNotifier"
         let menu = NSMenu()
+        menu.delegate = self
         statusMenuItem = NSMenuItem(title: renderedStatus(), action: nil, keyEquivalent: "")
         statusMenuItem?.isEnabled = false
         menu.addItem(statusMenuItem!)
         menu.addItem(.separator())
+        let mute = NSMenuItem(title: "Mute", action: #selector(menuMute), keyEquivalent: "")
+        mute.state = config.muted ? .on : .off
+        menu.addItem(mute)
+        muteMenuItem = mute
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show log", action: #selector(menuShowLog), keyEquivalent: ""))
@@ -363,6 +380,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
         statusItem = item
         renderStatus()
+        updateIcon()
+    }
+
+    /// Menu-bar icon (SF Symbol, no assets): bell normally, bell.badge on
+    /// unread message notifications, bell.slash when delivery is blocked or
+    /// switched off in Settings. Falls back to "TN" text if symbols fail.
+    private func updateIcon() {
+        let name: String
+        if notifyOff || NotificationAuth.isBlocked(rawValue: notifyRawValue) {
+            name = "bell.slash"
+        } else if hasUnread {
+            name = "bell.badge"
+        } else {
+            name = "bell"
+        }
+        guard let button = statusItem?.button else { return }
+        if let img = NSImage(systemSymbolName: name, accessibilityDescription: "TeamsNotifier") {
+            img.isTemplate = true
+            button.image = img
+            button.title = ""
+        } else {
+            button.image = nil
+            button.title = "TN"
+        }
+    }
+
+    /// Per-setting check: authorization can read authorized while the app is
+    /// switched OFF in Settings > Notifications (or style None). Refreshed at
+    /// startup and on Copy diagnostics.
+    private func refreshNotifySettings() async {
+        let s = await Notifier.shared.settings()
+        setNotifyAuth(s.authorizationStatus.rawValue)
+        let off = NotifySettings.isAlertOff(alertSettingRaw: s.alertSetting.rawValue, alertStyleRaw: s.alertStyle.rawValue)
+        if off, !notifyOff {
+            Log.fault("notifications off in Settings; fix: Settings > Notifications > TeamsNotifier > Allow + Alerts")
+        }
+        notifyOff = off
+        renderStatus()
+        updateIcon()
     }
 
     /// Single status path: every setStatus renders base + notify auth.
@@ -377,7 +433,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func renderedStatus() -> String {
-        StatusLine.build(base: baseStatus, notifyRawValue: notifyRawValue)
+        var s = StatusLine.build(base: baseStatus, notifyRawValue: notifyRawValue)
+        if notifyOff { s += NotifySettings.offSuffix }
+        return s
     }
 
     private func renderStatus() {
@@ -398,6 +456,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus(base)
     }
 
+    @objc private func menuMute() {
+        config.muted.toggle()
+        muteMenuItem?.state = config.muted ? .on : .off
+        do {
+            try config.save(to: flags.configPath)
+        } catch {
+            Log.fault("mute persist failed: \(error)")
+        }
+        Log.info(config.muted ? "muted" : "unmuted")
+    }
+
     @objc private func menuSignIn() {
         Task { await interactiveSignIn() }
     }
@@ -412,8 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuCopyDiagnostics() {
         Task {
-            let raw = await Notifier.shared.authorizationStatus().rawValue
-            setNotifyAuth(raw) // refresh stale suffix while here
+            await refreshNotifySettings() // refresh stale suffix while here
+            let raw = notifyRawValue
             let lines = Log.lastLines(30)
             let text = StatusLine.diagnostics(
                 authLabel: NotificationAuth.label(rawValue: raw),
@@ -430,7 +499,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func menuQuit() {
         Task {
             await trouter?.stop()
+            await auth.stopKeepAlive()
             NSApp.terminate(nil)
         }
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// Opening the menu counts as seeing notifications: clear unread dot.
+    func menuWillOpen(_ menu: NSMenu) {
+        hasUnread = false
+        updateIcon()
     }
 }
