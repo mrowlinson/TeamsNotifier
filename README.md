@@ -33,6 +33,10 @@ back. Internal Teams APIs can drift; failures are loud (see Limits).
 5. Menu `TN` should show `connected`. Send yourself a Teams message from
    another device, or have someone message you; a notification appears.
    Click a notification copies its body to clipboard (no GUI to open).
+   Long-press/click Reply in the banner to answer inline (one HTTPS POST
+   per reply, zero idle cost). Success is silent (debug log); failure
+   posts "Reply failed: <reason>". Replies work while muted (mute gates
+   inbound notifications only).
 6. Optional config `~/.config/teamsnotifier/config.json`:
    ```json
    {"owner":{"displayName":"Michael Rowlinson","upn":"you@company.com","mri":""},
@@ -116,3 +120,7 @@ headers for exact endpoint/scope provenance.
   install to /Applications and launch via Finder/`open` before judging.
 - Channel vs group-chat threading: notification titles use the chat
   topic when Teams provides one, else member name, else thread id.
+- Replies post a plain message to the thread (not a threaded quote under
+  the triggering message). 1:1 + group chats proven by refs; channel
+  threads use the same endpoint (no channel-specific send in any ref)
+  but are live-untested — a rejection surfaces as "Reply failed".

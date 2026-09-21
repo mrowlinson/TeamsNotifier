@@ -1,15 +1,21 @@
 import AppKit
 import Foundation
+import TeamsCore
 import UserNotifications
 
 /// Native notifications. Title = "sender in chat" (or sender when the chat
 /// has no better name). Body = full message text. Sound on. Click = copy
-/// body to clipboard (no GUI to open).
+/// body to clipboard (no GUI to open). Message notifications carry a Reply
+/// text-input action posting to the thread via TeamsAPI.sendReply.
 /// Sticky banners: owner sets Alerts style in System Settings > Notifications.
 public final class Notifier: NSObject, @unchecked Sendable {
     public static let shared = Notifier()
 
     private let center = UNUserNotificationCenter.current()
+
+    /// Reply sender, wired by App (needs TeamsAPI). Result failure text is
+    /// the loud-failure reason.
+    public var onReply: (@Sendable (String, String) async -> Result<Void, Error>)?
 
     private override init() {
         super.init()
@@ -17,6 +23,12 @@ public final class Notifier: NSObject, @unchecked Sendable {
 
     public func setup() {
         center.delegate = self
+        let reply = UNTextInputNotificationAction(
+            identifier: ReplyInfo.replyActionID, title: "Reply", options: [])
+        let message = UNNotificationCategory(
+            identifier: ReplyInfo.categoryID, actions: [reply],
+            intentIdentifiers: [], options: [])
+        center.setNotificationCategories([message])
     }
 
     public func requestAuthorization() async -> Bool {
@@ -38,11 +50,17 @@ public final class Notifier: NSObject, @unchecked Sendable {
         await center.notificationSettings()
     }
 
-    public func post(title: String, body: String, id: String? = nil) {
+    /// chatID attaches the Reply action + thread id (message notifications).
+    /// Nil (system/test notifs) posts a plain notification with no action.
+    public func post(title: String, body: String, id: String? = nil, chatID: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body.isEmpty ? "(no text content)" : body
         content.sound = .default
+        if let chatID, !chatID.isEmpty {
+            content.categoryIdentifier = ReplyInfo.categoryID
+            content.userInfo = ReplyInfo.userInfo(chatID: chatID)
+        }
         let req = UNNotificationRequest(
             identifier: id ?? UUID().uuidString,
             content: content,
@@ -63,7 +81,15 @@ extension Notifier: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        // Any click/dismiss-with-action on a message notification copies it.
+        // Reply action: POST the text to the thread. Silent on success
+        // (debug log), loud system notification on failure. Never copies.
+        if response.actionIdentifier == ReplyInfo.replyActionID,
+           let textResponse = response as? UNTextInputNotificationResponse
+        {
+            await handleReply(textResponse)
+            return
+        }
+        // Any other click/dismiss-with-action copies the body (unchanged).
         let body = response.notification.request.content.body
         guard !body.isEmpty else { return }
         await MainActor.run {
@@ -72,6 +98,27 @@ extension Notifier: UNUserNotificationCenterDelegate {
             pb.setString(body, forType: .string)
         }
         Log.info("notification body copied to clipboard")
+    }
+
+    private func handleReply(_ response: UNTextInputNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        guard let chatID = ReplyInfo.chatID(from: info),
+              ReplyGate.canReply(chatID: chatID, text: response.userText)
+        else {
+            Log.debug("reply ignored (empty thread or text)")
+            return
+        }
+        let text = response.userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let onReply else {
+            Log.fault("reply dropped: no handler wired")
+            return
+        }
+        switch await onReply(chatID, text) {
+        case .success:
+            Log.debug("replied to \(chatID)")
+        case .failure(let err):
+            postSystem(title: "TeamsNotifier: reply failed", body: "Reply failed: \(TeamsAPI.reason(for: err))")
+        }
     }
 
     // Show banners even while the app is frontmost (we never are, but be safe).
