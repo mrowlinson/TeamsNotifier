@@ -10,6 +10,19 @@ public actor TeamsAPI {
         case network(String)
     }
 
+    /// Human reason for the loud "Reply failed: <reason>" notification.
+    public static func reason(for error: Error) -> String {
+        if let e = error as? APIError {
+            switch e {
+            case .http(let code, let body):
+                return body.isEmpty ? "HTTP \(code)" : "HTTP \(code): \(body)"
+            case .network(let msg):
+                return msg
+            }
+        }
+        return String(describing: error)
+    }
+
     private let auth: AuthManager
     private let session: URLSession
     private var nameCache: [String: String] = [:]
@@ -39,6 +52,41 @@ public actor TeamsAPI {
 
     public func primeCache(chatID: String, name: String) {
         nameCache[chatID] = name
+    }
+
+    /// Inline reply: POST one message to a thread (ReplyPayload provenance).
+    /// Same skype token + base as chat REST (no new auth). Any 2xx = sent
+    /// (refs see 201 Created). 401 refreshes the skype token once + retries,
+    /// mirroring fetchConversationName.
+    public func sendReply(chatID: String, text: String) async throws {
+        let payload = ReplyPayload.build(text: text, clientMessageID: ReplyPayload.clientMessageID())
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let creds = try await auth.ensureSkypeCredentials()
+        do {
+            try await postMessage(base: creds.chatServiceBase, chatID: chatID, skypeToken: creds.skypeToken, body: body)
+        } catch APIError.http(401, _) {
+            Log.info("reply 401, refreshing skype token once")
+            let fresh = try await auth.refreshSkypeCredentials()
+            try await postMessage(base: fresh.chatServiceBase, chatID: chatID, skypeToken: fresh.skypeToken, body: body)
+        }
+    }
+
+    private func postMessage(base: String, chatID: String, skypeToken: String, body: Data) async throws {
+        guard let url = ReplyPayload.url(chatServiceBase: base, chatID: chatID) else {
+            throw APIError.network("bad reply URL for \(chatID)")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("skypetoken=\(skypeToken)", forHTTPHeaderField: "Authentication")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("redirectAs404", forHTTPHeaderField: "BehaviorOverride")
+        req.httpBody = body
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw APIError.network("no HTTP response") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.http(http.statusCode, String(data: data, encoding: .utf8)?.prefix(200).description ?? "")
+        }
     }
 
     private func fetchConversationName(chatID: String) async throws -> String {

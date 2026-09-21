@@ -180,6 +180,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         api = TeamsAPI(auth: auth)
         let authRef = auth
         let apiRef = api!
+        // Inline replies: allowed even while muted (mute gates inbound only).
+        Notifier.shared.onReply = { chatID, text in
+            do {
+                try await apiRef.sendReply(chatID: chatID, text: text)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
         trouter = TrouterClient(
             auth: authRef,
             onMessage: { [weak self] message, isEdit in
@@ -239,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.info("notify [\(reason)] \(title)")
             hasUnread = true
             updateIcon()
-            Notifier.shared.post(title: title, body: m.plainText, id: m.messageID.isEmpty ? nil : m.messageID)
+            Notifier.shared.post(title: title, body: m.plainText, id: m.messageID.isEmpty ? nil : m.messageID, chatID: m.chatID)
         }
     }
 
