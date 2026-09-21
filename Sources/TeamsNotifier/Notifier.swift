@@ -23,8 +23,16 @@ public final class Notifier: NSObject, @unchecked Sendable {
 
     public func setup() {
         center.delegate = self
+        // Reply affordance: text-input action, minimal options (no
+        // .foreground/.destructive/.authenticationRequired — any of those
+        // hides or degrades the button). Explicit placeholder: the SDK
+        // default is empty, which leaves the expanded field unlabeled.
         let reply = UNTextInputNotificationAction(
-            identifier: ReplyInfo.replyActionID, title: "Reply", options: [])
+            identifier: ReplyInfo.replyActionID,
+            title: ReplyInfo.actionTitle,
+            options: [],
+            textInputButtonTitle: ReplyInfo.sendButtonTitle,
+            textInputPlaceholder: ReplyInfo.textInputPlaceholder)
         let message = UNNotificationCategory(
             identifier: ReplyInfo.categoryID, actions: [reply],
             intentIdentifiers: [], options: [])
@@ -122,10 +130,13 @@ extension Notifier: UNUserNotificationCenterDelegate {
     }
 
     // Show banners even while the app is frontmost (we never are, but be safe).
+    // .list keeps the foreground copy in Notification Center too, where the
+    // Reply button sits expanded. No API forces always-visible buttons;
+    // hover (banner/alert) + expanded NC is the macOS ceiling.
     public func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        [.banner, .list, .sound]
     }
 }
