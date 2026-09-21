@@ -10,8 +10,9 @@ unreliable; this is a 652KB single binary idling at ~12MB footprint.
 
 ## Status
 
-Parsers, filter, framing, auth plumbing, and notifications are built and
-unit-tested (66 tests green). Live auth + realtime against the owner's
+Parsers, filter, framing, auth plumbing, device-code flow, and
+notifications are built and unit-tested (83 tests green). Live auth +
+realtime against the owner's
 work tenant is **not yet validated** — owner runs Setup below and reports
 back. Internal Teams APIs can drift; failures are loud (see Limits).
 
@@ -20,10 +21,13 @@ back. Internal Teams APIs can drift; failures are loud (see Limits).
 1. Build + install:
    `Scripts/package.sh --install`
 2. Launch `/Applications/TeamsNotifier.app` (`TN` appears in menu bar).
-3. Browser opens to Microsoft sign-in. Sign in with the **work** account
-   (interactive + MFA/CA fine). Tab shows "Signed in to Teams Notifier";
-   close it. No tokens touch disk except the refresh token (Keychain,
-   `com.teamsnotifier.tokens`).
+3. Sign-in is a device code (no redirect URI to register):
+   the app copies a code like `XXXX-XXXX` to the clipboard, opens
+   `microsoft.com/devicelogin` in the default browser, and posts a
+   notification with the code + URL. Paste/type the code, sign in with
+   the **work** account (interactive + MFA/CA fine), approve. Menu shows
+   `waiting for sign-in…`, then `connected`. No tokens touch disk except
+   the refresh token (Keychain, `com.teamsnotifier.tokens`).
 4. Allow notifications when prompted. For sticky banners: System Settings
    > Notifications > TeamsNotifier > Banner style **Alerts**.
 5. Menu `TN` should show `connected`. Send yourself a Teams message from
@@ -40,13 +44,15 @@ back. Internal Teams APIs can drift; failures are loud (see Limits).
 7. Optional start-at-login: `Scripts/install-launch-agent.sh`
    (logs to `/tmp/teamsnotifier.log`).
 
-If the browser flow fails, the app offers a manual flow: it opens the
-sign-in page, you paste the redirect URL back
-(`http://127.0.0.1:8765/callback?code=...`, connection-refused page is
+Fallback: relaunch with `--auth loopback` for the older system-browser
+flow (RFC 8252 loopback redirect, root path). If that fails, the app
+offers a manual flow: it opens the sign-in page, you paste the redirect
+URL back (`http://127.0.0.1:8765/?code=...`, connection-refused page is
 expected — the `?code=` in the address bar is what matters).
 
 Useful flags: `--verbose` (debug to stderr), `--notify-test`,
-`--sign-in`, `--sign-out`, `--offline` (menu only, no network), `--help`.
+`--sign-in`, `--sign-out`, `--offline` (menu only, no network),
+`--auth device|loopback` (default device), `--help`.
 
 ## Knobs
 
@@ -61,17 +67,20 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
 
 ## How it works
 
-- Auth: system browser -> AAD `organizations` authorize (Teams desktop
-  public client `1fec8e78-...`, PKCE S256, loopback redirect) -> token
-  endpoint (scope `https://api.spaces.skype.com/.default openid profile
-  offline_access`) -> `POST teams.microsoft.com/api/authsvc/v1.0/authz`
-  exchanges AAD token for skype token + regionGtms. Owner MRI/UPN learned
-  from token claims. Refresh token in Keychain; expiry posts "sign-in
-  needed" and reopens sign-in. No app registration, no admin consent.
-  DISCLOSURE: reuses Microsoft's public Teams client ID (same pattern as
+- Auth: RFC 8628 device code against AAD `organizations` (Teams desktop
+  public client `1fec8e78-...`, scope
+  `https://api.spaces.skype.com/.default openid profile offline_access`,
+  no redirect URI) -> token endpoint poll (interval + slow_down backoff)
+  -> `POST teams.microsoft.com/api/authsvc/v1.0/authz` exchanges AAD
+  token for skype token + regionGtms. Fallback `--auth loopback`: system
+  browser + PKCE S256 + RFC 8252 loopback redirect (root path, listener
+  started before the port is read). Owner MRI/UPN learned from token
+  claims. Refresh token in Keychain; expiry posts "sign-in needed" and
+  reopens sign-in. No app registration, no admin consent. DISCLOSURE:
+  reuses Microsoft's public Teams client ID (same pattern as
   purple-teams, ost). ASWebAuthenticationSession was specced but cannot
   work here (needs a custom scheme registered on the OAuth client, which
-  we don't own); system browser + RFC 8252 loopback is the working shape.
+  we don't own).
 - Realtime: `POST go.trouter.teams.microsoft.com/v4/a` ->
   socket.io session GET -> `URLSessionWebSocketTask` -> `user.authenticate`
   + `user.activity` -> registrar (NextGenCalling, SkypeSpacesWeb,
