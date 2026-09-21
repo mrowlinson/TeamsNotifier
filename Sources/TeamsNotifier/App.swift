@@ -123,7 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         do {
-            config = try Config.load(from: flags.configPath)
+            // Missing file + Keychain sign-in = existing install that never
+            // wrote a config: migrate owner schedule/rules (not blank).
+            let signedIn = TokenStore().readRefreshToken() != nil
+            config = try Config.load(from: flags.configPath, existingInstall: signedIn)
         } catch {
             Log.fault("config load failed (\(flags.configPath)): \(error), using defaults")
             config = .default
