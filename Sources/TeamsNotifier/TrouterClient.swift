@@ -210,9 +210,10 @@ public actor TrouterClient {
         req.setValue(TeamsConstants.userAgent, forHTTPHeaderField: "User-Agent")
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+        guard let http = resp as? HTTPURLResponse, RegistrarResponse.isSuccess(statusCode: http.statusCode) else {
             throw AuthManager.AuthError.protocolError("registrar \(spec.appID) HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1): \(String(data: data, encoding: .utf8)?.prefix(160) ?? "")")
         }
+        Log.debug("registrar \(spec.appID) HTTP \(http.statusCode)")
     }
 
     // MARK: - WS loops

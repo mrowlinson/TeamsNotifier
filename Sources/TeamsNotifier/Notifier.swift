@@ -28,6 +28,10 @@ public final class Notifier: NSObject, @unchecked Sendable {
         }
     }
 
+    public func authorizationStatus() async -> UNAuthorizationStatus {
+        await center.notificationSettings().authorizationStatus
+    }
+
     public func post(title: String, body: String, id: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
