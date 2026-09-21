@@ -2,17 +2,22 @@ import Foundation
 
 /// One notify/skip rule: the extensible store behind ChatFilter's gates.
 ///
-/// - `kind`: rule type id. Known ids are `skip-own`, `allow-types`,
-///   `skip-edits`, `loud-chat`; anything else is a future/custom type:
-///   stored, GUI-editable, round-tripped, but not enforced (first match
-///   per kind wins; unknown kinds are ignored by the filter).
-/// - `value`: payload. allow-types = comma-separated type heads
-///   ("Text, RichText"); loud-chat = chat-name substring; skip-own and
-///   skip-edits ignore it.
+/// - `kind`: rule type id. Known ids are plain-language phrases (see
+///   `knownKinds`); anything else is a future/custom type: stored,
+///   GUI-editable, round-tripped, but not enforced (first match per kind
+///   wins; unknown kinds are ignored by the filter). The four pre-rename
+///   ids (`skip-own`, `allow-types`, `skip-edits`, `loud-chat`) still
+///   decode: they map to their replacements on load (see `legacyKinds`).
+/// - `value`: payload. only-these-message-types = comma-separated type
+///   heads ("Text, RichText"); noisy-chats-mention-only = chat-name text;
+///   the rest ignore it.
 /// - `enabled`: per-rule on/off switch. A disabled (or absent) known
 ///   rule switches its gate off: own messages and edits notify, the
-///   loud rule stops matching, allow-types allows every type (stored
-///   in the legacy scalar as `allowAllMarker`).
+///   noisy rule stops matching, message-types allows every type (stored
+///   in the legacy scalar as `allowAllMarker`). Exception: an ABSENT
+///   noisy-chats-channel-mentions / my-name-as-backup rule leaves its
+///   gate ON (the hardcoded pre-rules behavior); only a present
+///   disabled rule turns those two off.
 ///
 /// Config migrates legacy scalars to these rules on first load of a
 /// pre-rules file (existing installs keep their exact effective
@@ -35,10 +40,13 @@ public struct NotifyRule: Codable, Sendable, Equatable {
 
     /// Tolerant decode: every key falls back (missing `enabled` means on,
     /// like MuteWindow). A rule with no kind decodes as kind "" and is
-    /// dropped with a warning by normalizeRules().
+    /// dropped with a warning by normalizeRules(). Pre-rename kind ids
+    /// map to their replacements here, so stored old configs load with
+    /// identical behavior and re-save with new ids.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
+        let rawKind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
+        kind = NotifyRule.canonicalKind(rawKind)
         value = (try? c.decodeIfPresent(String.self, forKey: .value)) ?? ""
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
     }
@@ -46,34 +54,89 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     // MARK: kinds
 
     /// Skip messages sent by the owner. Value ignored.
-    public static let skipOwn = "skip-own"
+    public static let skipMyMessages = "skip-my-own-messages"
     /// Message-type heads that notify (value = CSV). Absent/disabled =
     /// every type notifies.
-    public static let allowTypes = "allow-types"
+    public static let messageTypes = "only-these-message-types"
     /// Skip MessageUpdate edits. Value ignored. (Enabled = skip, so the
     /// stock off state "notify on edit: no" migrates as enabled.)
-    public static let skipEdits = "skip-edits"
+    public static let skipEdited = "skip-edited-messages"
     /// Chats whose name contains the value notify only on owner or
     /// channel/Everyone mention.
-    public static let loudChat = "loud-chat"
+    public static let noisyChats = "noisy-chats-mention-only"
+    /// In noisy chats, channel/@team/@everyone mentions also notify.
+    /// Absent = ON (hardcoded pre-rules behavior; deleting the rule
+    /// reverts to ON). Disabled = only direct owner mentions notify
+    /// there. Value ignored.
+    public static let noisyChannel = "noisy-chats-channel-mentions"
+    /// When Teams omits sender/mention IDs, fall back to comparing the
+    /// owner's display name. Absent = ON (hardcoded pre-rules behavior;
+    /// deleting the rule reverts to ON). Disabled = IDs only. Value
+    /// ignored.
+    public static let nameBackup = "my-name-as-backup"
 
     /// Known ids, in migration order. The set is open: the GUI kind field
     /// accepts anything, and unknown ids round-trip untouched.
-    public static let knownKinds = [skipOwn, allowTypes, skipEdits, loudChat]
+    public static let knownKinds = [skipMyMessages, messageTypes, skipEdited, noisyChats, noisyChannel, nameBackup]
+
+    /// Pre-rename ids -> replacements. Applied on decode (and to GUI
+    /// input), so old stored configs keep working unchanged.
+    public static let legacyKinds = [
+        "skip-own": skipMyMessages,
+        "allow-types": messageTypes,
+        "skip-edits": skipEdited,
+        "loud-chat": noisyChats,
+    ]
+
+    /// Map a pre-rename id to its replacement; anything else passes
+    /// through untouched (unknown/custom kinds included).
+    public static func canonicalKind(_ kind: String) -> String {
+        legacyKinds[kind] ?? kind
+    }
 
     /// notifyTypes value meaning "every type notifies". Written by the
-    /// rules sync when allow-types is absent/disabled; honored by
-    /// ChatFilter's type gate. Never appears in legacy files.
+    /// rules sync when the message-types rule is absent/disabled; honored
+    /// by ChatFilter's type gate. Never appears in legacy files.
     public static let allowAllMarker = "*"
 
-    /// Editor hint per kind; unknown kinds get the generic line.
+    /// Editor hint per kind; unknown kinds get the generic line. Legacy
+    /// ids resolve to their replacement's hint.
     public static func hint(for kind: String) -> String {
-        switch kind {
-        case skipOwn: "On: skip messages you sent. Value ignored."
-        case allowTypes: "Value: comma-separated types, e.g. Text, RichText. Off: all types notify."
-        case skipEdits: "On: skip message edits. Off: edits notify. Value ignored."
-        case loudChat: "Value: chat-name substring. Matching chats notify only on owner/channel mention."
+        switch canonicalKind(kind) {
+        case skipMyMessages: "On: skip messages you sent. Value ignored."
+        case messageTypes: "Value: message types that notify, e.g. Text, RichText. Off: every type notifies (typing, member notices, calls too)."
+        case skipEdited: "On: skip edited messages. Off: edits notify. Value ignored."
+        case noisyChats: "Value: chat-name text, e.g. BTAC. Matching chats notify only when you are mentioned."
+        case noisyChannel: "On: @channel/@team/@everyone also notify in noisy chats. Off: only your direct mentions do. Deleting this rule turns it back on. Value ignored."
+        case nameBackup: "On: when Teams omits sender/mention IDs, match by your display name. Off: IDs only. Deleting this rule turns it back on. Value ignored."
         default: "Custom type: stored and round-tripped, not enforced yet."
+        }
+    }
+
+    /// Plain-language label for the value field per kind.
+    public static func valueLabel(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case messageTypes: "Types:"
+        case noisyChats: "Chat text:"
+        default: "Value:"
+        }
+    }
+
+    /// Example text for the value field per kind.
+    public static func valuePlaceholder(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case messageTypes: "Text, RichText"
+        case noisyChats: "BTAC"
+        default: "(ignored)"
+        }
+    }
+
+    /// Whether the kind reads its value (the value field disables
+    /// otherwise).
+    public static func usesValue(_ kind: String) -> Bool {
+        switch canonicalKind(kind) {
+        case messageTypes, noisyChats: true
+        default: false
         }
     }
 
@@ -81,15 +144,16 @@ public struct NotifyRule: Codable, Sendable, Equatable {
 
     /// Nil when valid, else a human-readable reason. Unknown kinds are
     /// always valid (extensible payload); known kinds needing a value
-    /// must have a non-blank one.
+    /// must have a non-blank one. Legacy ids validate as their
+    /// replacement (tolerant: decode already canonicalizes).
     public func issue() -> String? {
-        let k = kind.trimmingCharacters(in: .whitespacesAndNewlines)
+        let k = NotifyRule.canonicalKind(kind.trimmingCharacters(in: .whitespacesAndNewlines))
         if k.isEmpty { return "rule has no type" }
         switch k {
-        case NotifyRule.allowTypes where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-            return "allow-types rule needs a value (e.g. Text, RichText)"
-        case NotifyRule.loudChat where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-            return "loud-chat rule needs a chat-name substring"
+        case NotifyRule.messageTypes where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "only-these-message-types rule needs a value (e.g. Text, RichText)"
+        case NotifyRule.noisyChats where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "noisy-chats-mention-only rule needs chat-name text (e.g. BTAC)"
         default:
             return nil
         }
@@ -105,19 +169,24 @@ public struct NotifyRule: Codable, Sendable, Equatable {
 
     // MARK: migration
 
-    /// Legacy scalars -> the four stock rules. Empty inputs mean "legacy
+    /// Legacy scalars -> the stock rules. Empty inputs mean "legacy
     /// fill" (mirrors Config.load: blank loud = BTAC, blank types =
     /// Text/RichText), so migrated rules encode the exact effective
-    /// legacy behavior. Always returns all four kinds, in knownKinds
-    /// order; `notifyOnEdit` maps to inverted skip-edits.
+    /// legacy behavior. Always returns all six kinds, in knownKinds
+    /// order; `notifyOnEdit` maps to inverted skip-edited-messages. The
+    /// two boolean-only gates (noisy channel mentions, name backup) had
+    /// no legacy scalar: they migrate enabled, matching the hardcoded
+    /// behavior every install already had.
     public static func migrate(skipOwn: Bool, notifyOnEdit: Bool, types: [String], loud: String) -> [NotifyRule] {
         let effLoud = loud.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "BTAC" : loud
         let effTypes = types.isEmpty ? ["Text", "RichText"] : types
         return [
-            NotifyRule(kind: NotifyRule.skipOwn, enabled: skipOwn),
-            NotifyRule(kind: NotifyRule.allowTypes, value: effTypes.joined(separator: ", "), enabled: true),
-            NotifyRule(kind: NotifyRule.skipEdits, enabled: !notifyOnEdit),
-            NotifyRule(kind: NotifyRule.loudChat, value: effLoud, enabled: true),
+            NotifyRule(kind: NotifyRule.skipMyMessages, enabled: skipOwn),
+            NotifyRule(kind: NotifyRule.messageTypes, value: effTypes.joined(separator: ", "), enabled: true),
+            NotifyRule(kind: NotifyRule.skipEdited, enabled: !notifyOnEdit),
+            NotifyRule(kind: NotifyRule.noisyChats, value: effLoud, enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChannel, enabled: true),
+            NotifyRule(kind: NotifyRule.nameBackup, enabled: true),
         ]
     }
 }
