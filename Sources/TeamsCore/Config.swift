@@ -30,10 +30,19 @@ public struct Config: Codable, Sendable {
     /// Message types that notify (prefix match on messagetype's first
     /// segment, e.g. "Text", "RichText"). Default ["Text", "RichText"].
     public var notifyTypes: [String]
-    /// Mute switch (menu toggle, persisted). Suppresses message
-    /// notifications only — system/sign-in-needed notifications still show.
-    /// Default false.
+    /// Legacy persisted mute flag. The app overwrites it per message with the
+    /// effective value (schedule + memory-only manual override), so the
+    /// stored value no longer means anything. Kept so old configs still
+    /// decode/round-trip.
     public var muted: Bool
+    /// Weekly mute schedule. Default: Mon-Fri 07:50-16:40 + all day Sat/Sun.
+    /// Empty list disables scheduled mute (never muted by schedule).
+    public var muteWindows: [MuteWindow]
+    /// IANA time zone the schedule runs in. Default "America/New_York".
+    public var scheduleTZ: String
+    /// Issues seen while decoding the schedule keys (wrong JSON types).
+    /// Not encoded. Drained by normalizeSchedule() into fault-log lines.
+    public var scheduleDecodeIssues: [String] = []
 
     public init(
         owner: Owner = Owner(),
@@ -41,7 +50,9 @@ public struct Config: Codable, Sendable {
         notifyOnEdit: Bool = false,
         skipOwnMessages: Bool = true,
         notifyTypes: [String] = ["Text", "RichText"],
-        muted: Bool = false
+        muted: Bool = false,
+        muteWindows: [MuteWindow] = MuteWindow.defaults,
+        scheduleTZ: String = MuteSchedule.defaultTimeZoneID
     ) {
         self.owner = owner
         self.loudSubstring = loudSubstring
@@ -49,14 +60,17 @@ public struct Config: Codable, Sendable {
         self.skipOwnMessages = skipOwnMessages
         self.notifyTypes = notifyTypes
         self.muted = muted
+        self.muteWindows = muteWindows
+        self.scheduleTZ = scheduleTZ
     }
 
     enum CodingKeys: String, CodingKey {
         case owner, loudSubstring, notifyOnEdit, skipOwnMessages, notifyTypes, muted
+        case muteWindows, scheduleTZ
     }
 
-    /// Tolerant decode: configs written before `muted` existed (or missing
-    /// any key) still load, missing keys fall back to defaults.
+    /// Tolerant decode: configs written before `muted`/`muteWindows` existed
+    /// (or missing any key) still load, missing keys fall back to defaults.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Config.default
@@ -66,6 +80,51 @@ public struct Config: Codable, Sendable {
         skipOwnMessages = (try? c.decodeIfPresent(Bool.self, forKey: .skipOwnMessages)) ?? d.skipOwnMessages
         notifyTypes = (try? c.decodeIfPresent([String].self, forKey: .notifyTypes)) ?? d.notifyTypes
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
+        // Schedule keys: present-but-undecodable falls back to defaults AND
+        // records a fault-log line (a silent try? would hide owner typos).
+        scheduleDecodeIssues = []
+        if c.contains(.muteWindows) {
+            do {
+                muteWindows = try c.decodeIfPresent([MuteWindow].self, forKey: .muteWindows) ?? d.muteWindows
+            } catch {
+                muteWindows = d.muteWindows
+                scheduleDecodeIssues.append("bad muteWindows (undecodable JSON, want [{days,start,end}]), using defaults")
+            }
+        } else {
+            muteWindows = d.muteWindows
+        }
+        if c.contains(.scheduleTZ) {
+            do {
+                scheduleTZ = try c.decodeIfPresent(String.self, forKey: .scheduleTZ) ?? d.scheduleTZ
+            } catch {
+                scheduleTZ = d.scheduleTZ
+                scheduleDecodeIssues.append("bad scheduleTZ (undecodable JSON, want IANA string), using defaults")
+            }
+        } else {
+            scheduleTZ = d.scheduleTZ
+        }
+    }
+
+    /// Replace invalid schedule pieces with defaults. Returns fault-log lines
+    /// for every substitution (the app logs them; TeamsCore has no logger).
+    /// Empty windows list is valid (scheduled mute disabled). Decode issues
+    /// are drained (reported once); an unknown scheduleTZ keeps warning
+    /// since the value is kept and the app falls back at resolve time.
+    @discardableResult
+    public mutating func normalizeSchedule() -> [String] {
+        var warnings = scheduleDecodeIssues
+        scheduleDecodeIssues = []
+        for w in muteWindows {
+            if let issue = w.issue() {
+                warnings.append("bad muteWindows (\(issue)), using defaults")
+                muteWindows = MuteWindow.defaults
+                break
+            }
+        }
+        if TimeZone(identifier: scheduleTZ) == nil {
+            warnings.append("unknown scheduleTZ \"\(scheduleTZ)\", using system time zone")
+        }
+        return warnings
     }
 
     public static var `default`: Config {
