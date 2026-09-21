@@ -55,6 +55,12 @@ public enum ReplyInfo {
     public static let categoryID = "TN_MESSAGE"
     public static let replyActionID = "TN_REPLY"
     public static let chatIDKey = "TNChatID"
+    /// Action button title: banner/alert hover + NC expanded. Keep "Reply".
+    public static let actionTitle = "Reply"
+    /// Inline-reply send button title (expanded UI).
+    public static let sendButtonTitle = "Send"
+    /// Inline-reply field placeholder (expanded UI).
+    public static let textInputPlaceholder = "Type a reply…"
 
     public static func userInfo(chatID: String) -> [String: String] {
         [chatIDKey: chatID]

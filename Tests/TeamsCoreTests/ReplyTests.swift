@@ -62,6 +62,21 @@ struct ReplyInfoTests {
     }
 }
 
+@Suite("Reply notification constants")
+struct ReplyInfoConstantsTests {
+    @Test func ids() {
+        #expect(ReplyInfo.categoryID == "TN_MESSAGE")
+        #expect(ReplyInfo.replyActionID == "TN_REPLY")
+        #expect(ReplyInfo.chatIDKey == "TNChatID")
+    }
+
+    @Test func actionStrings() {
+        #expect(ReplyInfo.actionTitle == "Reply")
+        #expect(ReplyInfo.sendButtonTitle == "Send")
+        #expect(ReplyInfo.textInputPlaceholder == "Type a reply…")
+    }
+}
+
 @Suite("Reply gating")
 struct ReplyGateTests {
     @Test func validReplies() {
