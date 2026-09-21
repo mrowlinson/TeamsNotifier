@@ -177,6 +177,99 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         }
     }
 
+    // MARK: editor UX (display only; zero behavior/decode effect)
+
+    /// One Add-picker row: pick by GOAL in plain words. `does` is the
+    /// full-sentence WHAT IT DOES, `example` a concrete case ("" when
+    /// the kind ignores its value).
+    public struct GoalOption: Sendable, Equatable {
+        public var kind: String
+        public var goal: String
+        public var does: String
+        public var example: String
+    }
+
+    /// Goal rows in knownKinds order; the GUI appends a Custom row.
+    /// Each option's kind is its stored id (goal-pick maps 1:1).
+    public static var goalOptions: [GoalOption] {
+        knownKinds.map {
+            GoalOption(kind: $0, goal: goalTitle(for: $0), does: explanation(for: $0), example: exampleText(for: $0))
+        }
+    }
+
+    /// Plain-words goal title per kind (the Add picker's row title).
+    public static func goalTitle(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case skipMyMessages: "Skip messages I sent myself"
+        case messageTypes: "Only some message types notify"
+        case skipEdited: "Skip edited-message notices"
+        case noisyChats: "Quiet down noisy chats"
+        case noisyChannel: "Let channel mentions through in noisy chats"
+        case nameBackup: "Match my name when Teams omits IDs"
+        default: "Custom rule of my own"
+        }
+    }
+
+    /// Full-sentence WHAT IT DOES per kind (2-3 lines max in the
+    /// editor). Unknown kinds get the custom fallback.
+    public static func explanation(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case skipMyMessages: "Messages you sent never notify. Use this to silence your own echoes in busy chats."
+        case messageTypes: "Only the listed message types notify; everything else stays silent."
+        case skipEdited: "Edited messages stay silent. Turn it off if you want edits to notify."
+        case noisyChats: "Chats whose name matches your text notify only when you are mentioned."
+        case noisyChannel: "Channel, team and everyone mentions also notify in noisy chats. Turn it off for direct mentions only. Deleting this rule turns it back on."
+        case nameBackup: "When Teams omits sender and mention IDs, match by your display name instead. Turn it off for IDs only. Deleting this rule turns it back on."
+        default: "Custom type: stored and round-tripped, not enforced yet. A future update may implement it."
+        }
+    }
+
+    /// Concrete example per kind; "" when the kind ignores its value
+    /// (the GUI hides the example line then).
+    public static func exampleText(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case messageTypes: "Types “Text, RichText” notify for plain and formatted messages only."
+        case noisyChats: "Chat text “BTAC” quiets “BTAC War Room” except for your mentions."
+        default: ""
+        }
+    }
+
+    /// Starter value for a rule added from the goal picker. Matches
+    /// the legacy fills, so picked rules are valid immediately.
+    public static func defaultValue(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case messageTypes: "Text, RichText"
+        case noisyChats: "BTAC"
+        default: ""
+        }
+    }
+
+    /// What this rule does, in words (the table row text). Includes
+    /// the value where the kind reads one; never shows raw ids.
+    public static func sentence(for rule: NotifyRule) -> String {
+        let v = rule.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return switch canonicalKind(rule.kind.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        case skipMyMessages: "Skip messages you sent."
+        case messageTypes:
+            v.isEmpty ? "Only these message types notify (needs a value)." : "Only these message types notify: \(v)."
+        case skipEdited: "Skip edited messages."
+        case noisyChats:
+            v.isEmpty ? "Noisy chats notify only on mention (needs chat text)." : "Chats matching “\(v)” notify only on mention."
+        case noisyChannel: "Channel mentions also notify in noisy chats."
+        case nameBackup: "Match by your display name when IDs are missing."
+        default:
+            v.isEmpty ? "Custom rule “\(rule.kind)” (stored, not enforced yet)." : "Custom rule “\(rule.kind)” = “\(v)” (stored, not enforced yet)."
+        }
+    }
+
+    /// Blank-state teaching text (shown when the list is empty): what
+    /// rules are, that blank = notify everything, how to add one.
+    public static let blankStateText = """
+        Rules decide what notifies. Each rule either quiets something (skip) or narrows what gets through.
+        A blank list means every message notifies.
+        Click Add, pick a goal in plain words, fill in the value, then Save.
+        """
+
     // MARK: validation + parsing
 
     /// Nil when valid, else a human-readable reason. Unknown kinds are
@@ -197,6 +290,22 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     }
 
     public var isValid: Bool { issue() == nil }
+
+    /// Same validity as issue(), but worded for the editor: display
+    /// names instead of raw ids, plus a fix hint. GUI-only; normalize
+    /// warnings keep issue().
+    public func plainIssue() -> String? {
+        let k = NotifyRule.canonicalKind(kind.trimmingCharacters(in: .whitespacesAndNewlines))
+        if k.isEmpty { return "This rule has no type yet. Pick a Kind above, or type a custom name." }
+        switch k {
+        case NotifyRule.messageTypes where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "“\(NotifyRule.displayName(for: NotifyRule.messageTypes))” needs a value, e.g. Text, RichText."
+        case NotifyRule.noisyChats where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "“\(NotifyRule.displayName(for: NotifyRule.noisyChats))” needs chat-name text, e.g. BTAC."
+        default:
+            return nil
+        }
+    }
 
     /// "Text, RichText" -> ["Text", "RichText"]. Trims pieces, drops
     /// empties ("a,,b" -> ["a","b"]).
