@@ -2,8 +2,9 @@ import Foundation
 import Network
 
 /// RFC 8252 loopback redirect receiver: listens on 127.0.0.1 (ephemeral
-/// port), captures one GET /callback?code=...&state=... from the system
-/// browser, answers with a human-readable page, then stops.
+/// port), captures one GET /?code=...&state=... from the system browser,
+/// answers with a human-readable page, then stops. Any path accepted (the
+/// query is what matters).
 public final class LoopbackServer: Sendable {
     public struct Result: Sendable {
         public let code: String
@@ -22,6 +23,7 @@ public final class LoopbackServer: Sendable {
     private struct State {
         var continuation: CheckedContinuation<Result, Swift.Error>?
         var done = false
+        var started = false
     }
 
     public init() throws {
@@ -40,18 +42,38 @@ public final class LoopbackServer: Sendable {
         listener.port?.rawValue
     }
 
-    /// Start listening and wait for one callback. Throws on timeout.
-    public func waitForCallback(timeoutSeconds: UInt = 300) async throws -> Result {
+    /// Start listening and block until the ephemeral port is bound. Callers
+    /// MUST call this (and read `port`) BEFORE building the redirect URI;
+    /// reading the port on a non-started listener yields 0 (AADSTS50011).
+    public func start() async throws {
+        let already = state.withLock { s -> Bool in
+            let was = s.started
+            s.started = true
+            return was
+        }
+        if already {
+            guard port != nil, port != 0 else { throw Error.bindFailed }
+            return
+        }
         listener.newConnectionHandler = { [weak self] conn in
             self?.handle(conn)
         }
         listener.start(queue: .global(qos: .userInitiated))
         // NWListener starts async; poll briefly for the bound port.
         let deadline = Date().addingTimeInterval(5)
-        while port == nil, Date() < deadline {
+        while (port == nil || port == 0), Date() < deadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        guard port != nil else { throw Error.bindFailed }
+        guard let p = port, p != 0 else {
+            listener.cancel()
+            throw Error.bindFailed
+        }
+        _ = p
+    }
+
+    /// Start listening (if needed) and wait for one callback. Throws on timeout.
+    public func waitForCallback(timeoutSeconds: UInt = 300) async throws -> Result {
+        try await start()
         defer { listener.cancel() }
         return try await withCheckedThrowingContinuation { cont in
             state.withLock { $0.continuation = cont }
@@ -76,7 +98,7 @@ public final class LoopbackServer: Sendable {
                 return
             }
             let firstLine = request.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? ""
-            // GET /callback?code=..&state=.. HTTP/1.1
+            // GET /?code=..&state=.. HTTP/1.1
             let target = firstLine.split(separator: " ").dropFirst().first.map(String.init) ?? ""
             var code: String?
             var stateParam: String?

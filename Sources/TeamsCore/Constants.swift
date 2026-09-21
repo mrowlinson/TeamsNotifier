@@ -17,16 +17,20 @@ public enum TeamsConstants {
     public static let tenant = "organizations"
     public static let authorizeURL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
     public static let tokenURL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+    /// RFC 8628 device authorization endpoint (primary sign-in; no redirect
+    /// URI, so no reply-URL registration needed on the reused client).
+    public static let deviceCodeURL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode"
 
     /// Primary scope. The api.spaces.skype.com access token is exchanged for
     /// a skype token; its JWT claims (oid, name, preferred_username) also
     /// identify the owner. openid/profile/offline_access mirror purple-teams.
     public static let primaryScope = "https://api.spaces.skype.com/.default openid profile offline_access"
 
-    /// Loopback redirect for native public clients (RFC 8252). AAD accepts
-    /// http://127.0.0.1:{port} without a registered reply URL.
+    /// Loopback redirect for native public clients (RFC 8252, fallback
+    /// sign-in). Root path: the reused first-party client has no /callback
+    /// registration (AADSTS50011), so use http://127.0.0.1:{port}/.
     public static let loopbackHost = "127.0.0.1"
-    public static let loopbackPath = "/callback"
+    public static let loopbackPath = "/"
 
     // MARK: - Skype token exchange (ost skype.rs, purple-teams teams_login.c)
 

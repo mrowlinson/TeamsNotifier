@@ -5,18 +5,24 @@ import TeamsCore
 
 /// User-delegated auth for a work Teams account.
 ///
-/// Flow (purple-teams work branch + ost work(), PKCE added per roshank8s):
-/// system browser -> AAD authorize (organizations, Teams desktop public
-/// client ID, PKCE S256) -> loopback redirect captures code -> token
-/// endpoint -> AAD access token + refresh token -> authsvc exchange ->
-/// skype token (+ regionGtms). Refresh token persists in Keychain.
+/// Primary flow: RFC 8628 device code (no redirect URI, so no reply-URL
+/// registration needed on the reused Teams public client). Fallback: system
+/// browser -> AAD authorize (PKCE S256, RFC 8252 loopback redirect) ->
+/// token endpoint. Both end the same way: AAD access + refresh token ->
+/// authsvc exchange -> skype token (+ regionGtms). Refresh token persists
+/// in Keychain.
+///
+/// WHY DEVICE CODE FIRST: the loopback flow needs a redirect URI the
+/// first-party client accepts; an unregistered path fails loud with
+/// AADSTS50011 and its exact registrations are unknowable from outside.
+/// Device code sidesteps that entirely and still handles MFA/CA (real
+/// browser on microsoft.com).
 ///
 /// WHY NOT ASWebAuthenticationSession: it can only intercept custom-scheme
 /// callbacks, and a custom scheme must be registered on the OAuth client.
 /// We reuse the Teams public client (no registration of our own), so no
-/// custom scheme is available; RFC 8252 loopback + system browser is the
-/// working shape for this client. Handles MFA/CA (real browser). Swap point
-/// is signInInteractive() if the owner ever registers their own client ID.
+/// custom scheme is available. Swap point is signInInteractive() if the
+/// owner ever registers their own client ID.
 public actor AuthManager {
     public enum AuthError: Error, Sendable {
         case noRefreshToken
@@ -24,6 +30,17 @@ public actor AuthManager {
         case network(String)
         case protocolError(String)
         case cancelled
+        /// Owner declined the device-code request, or polling ran past
+        /// the challenge expiry. Notify + offer retry, not a crash.
+        case denied
+        case expired
+    }
+
+    /// Sign-in transport. Device is default; loopback (+manual paste) stays
+    /// as fallback via --auth loopback.
+    public enum AuthMethod: String, Sendable {
+        case device
+        case loopback
     }
 
     public struct SkypeCredentials: Sendable {
@@ -46,6 +63,10 @@ public actor AuthManager {
     /// "sign-in needed" notification and reopens sign-in.
     public var onNeedsSignIn: (@Sendable (String) -> Void)?
 
+    /// Fired when the device-code challenge arrives, before polling starts.
+    /// App copies the user code, opens the browser, posts the notification.
+    public var onDeviceCode: (@Sendable (DeviceCodeFlow.Challenge) -> Void)?
+
     public init(store: TokenStore = TokenStore()) {
         self.store = store
         let cfg = URLSessionConfiguration.ephemeral
@@ -55,6 +76,10 @@ public actor AuthManager {
 
     public func setNeedsSignInHandler(_ h: @escaping @Sendable (String) -> Void) {
         onNeedsSignIn = h
+    }
+
+    public func setDeviceCodeHandler(_ h: @escaping @Sendable (DeviceCodeFlow.Challenge) -> Void) {
+        onDeviceCode = h
     }
 
     public var hasRefreshToken: Bool { store.readRefreshToken() != nil }
@@ -167,14 +192,109 @@ public actor AuthManager {
 
     // MARK: - Interactive sign-in
 
-    /// Full browser sign-in. Opens the system browser, waits for the
-    /// loopback callback, exchanges the code.
-    public func signInInteractive() async throws {
+    /// Full interactive sign-in. Device code by default (no redirect URI);
+    /// loopback + system browser on request. Same swap point either way.
+    public func signInInteractive(method: AuthMethod = .device) async throws {
+        switch method {
+        case .device: try await signInDevice()
+        case .loopback: try await signInLoopback()
+        }
+    }
+
+    // MARK: - Device code sign-in (primary, RFC 8628)
+
+    /// Request a challenge, hand it to the App (clipboard + browser +
+    /// notification), then poll the token endpoint to a terminal outcome.
+    public func signInDevice() async throws {
+        var req = URLRequest(url: URL(string: TeamsConstants.deviceCodeURL)!)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = form([
+            "client_id": TeamsConstants.workClientID,
+            "scope": TeamsConstants.primaryScope,
+        ])
+        let obj = try await postForm(req)
+        let challenge: DeviceCodeFlow.Challenge
+        do {
+            challenge = try DeviceCodeFlow.parseChallenge(obj)
+        } catch let DeviceCodeFlow.ParseError.serverError(code, desc) {
+            throw AuthError.network("devicecode request failed (\(code)): \(desc)")
+        } catch {
+            throw AuthError.protocolError("devicecode response malformed: \(error)")
+        }
+        Log.info("device challenge received, polling every \(challenge.interval)s")
+        onDeviceCode?(challenge)
+        try await pollDeviceToken(challenge)
+    }
+
+    private func pollDeviceToken(_ challenge: DeviceCodeFlow.Challenge) async throws {
+        var interval = challenge.interval
+        let start = Date()
+        while true {
+            let elapsed = Int(Date().timeIntervalSince(start))
+            var req = URLRequest(url: URL(string: TeamsConstants.tokenURL)!)
+            req.httpMethod = "POST"
+            req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            req.httpBody = form([
+                "client_id": TeamsConstants.workClientID,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": challenge.deviceCode,
+            ])
+            let obj = try await postForm(req)
+            switch DeviceCodeFlow.classifyPoll(
+                obj,
+                currentInterval: interval,
+                elapsedSeconds: elapsed,
+                expiresIn: challenge.expiresIn
+            ) {
+            case .keepWaiting(let delay):
+                try await sleepOrCancel(seconds: delay)
+            case .slowDown(let next):
+                Log.debug("device poll slow_down, interval now \(next)s")
+                interval = next
+                try await sleepOrCancel(seconds: next)
+            case .success(let access, let refresh, let secs):
+                guard let refresh, !refresh.isEmpty else {
+                    throw AuthError.protocolError("device flow returned no refresh token (offline_access missing?)")
+                }
+                try await storeFreshTokens(access: access, refresh: refresh, expiresIn: secs)
+                return
+            case .expired:
+                throw AuthError.expired
+            case .denied:
+                throw AuthError.denied
+            case .fatal(let code, let desc):
+                throw AuthError.network("device poll failed (\(code)): \(desc)")
+            }
+        }
+    }
+
+    private func sleepOrCancel(seconds: Int) async throws {
+        do {
+            try await Task.sleep(nanoseconds: UInt64(max(seconds, 1)) * 1_000_000_000)
+        } catch {
+            throw AuthError.cancelled
+        }
+    }
+
+    // MARK: - Loopback sign-in (fallback)
+
+    /// Full browser sign-in. Starts the loopback listener FIRST (so the
+    /// bound port is known), opens the system browser, waits for the
+    /// callback, exchanges the code.
+    public func signInLoopback() async throws {
         let pkce = PKCE.generate()
         let server = try LoopbackServer()
         let state = UUID().uuidString
         let nonce = UUID().uuidString
-        guard let port = server.port else { throw AuthError.network("loopback bind failed") }
+        do {
+            try await server.start()
+        } catch {
+            throw AuthError.network("loopback bind failed")
+        }
+        guard let port = server.port, port != 0 else {
+            throw AuthError.network("loopback bind failed (no port)")
+        }
         let redirect = "http://\(TeamsConstants.loopbackHost):\(port)\(TeamsConstants.loopbackPath)"
         var comps = URLComponents(string: TeamsConstants.authorizeURL)!
         comps.queryItems = [
@@ -266,8 +386,20 @@ public actor AuthManager {
         guard let access = obj["access_token"] as? String,
               let refresh = obj["refresh_token"] as? String
         else { throw AuthError.protocolError("code exchange response missing tokens") }
+        try await storeFreshTokens(access: access, refresh: refresh, expiresIn: nil, raw: obj)
+    }
+
+    /// Shared tail for both sign-in transports: persist refresh token,
+    /// learn owner, exchange the skype token.
+    private func storeFreshTokens(access: String, refresh: String, expiresIn: Int?, raw: [String: Any]? = nil) async throws {
         aadToken = access
-        aadExpiry = expiry(from: obj)
+        if let secs = expiresIn {
+            aadExpiry = Date().addingTimeInterval(TimeInterval(secs))
+        } else if let raw {
+            aadExpiry = expiry(from: raw)
+        } else {
+            aadExpiry = Date().addingTimeInterval(3600)
+        }
         store.writeRefreshToken(refresh)
         learnOwner(from: access)
         try await exchangeSkypeToken()

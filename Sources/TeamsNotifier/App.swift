@@ -15,6 +15,7 @@ struct Flags {
     var signIn = false
     var signOut = false
     var offline = false
+    var authMethod: AuthManager.AuthMethod = .device
     var help = false
 
     static func parse(_ args: [String]) -> Flags {
@@ -32,6 +33,13 @@ struct Flags {
             case "--sign-in": f.signIn = true
             case "--sign-out": f.signOut = true
             case "--offline": f.offline = true
+            case "--auth":
+                i += 1
+                if i < args.count, let m = AuthManager.AuthMethod(rawValue: args[i]) {
+                    f.authMethod = m
+                } else {
+                    fputs("unknown --auth value (want device|loopback)\n", stderr)
+                }
             case "--help", "-h": f.help = true
             default: fputs("unknown flag: \(args[i])\n", stderr)
             }
@@ -54,6 +62,7 @@ struct Flags {
       --sign-in       force interactive sign-in on launch
       --sign-out      clear Keychain tokens and exit
       --offline       menu bar only, no auth or connection (smoke test)
+      --auth M        sign-in transport: device (default) or loopback
       --help, -h      this text
     """
 }
@@ -215,19 +224,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func interactiveSignIn() async {
-        setStatus("signing in… (browser)")
+        let method = flags.authMethod
+        if method == .device {
+            await auth.setDeviceCodeHandler { [weak self] challenge in
+                Task { await self?.handleDeviceChallenge(challenge) }
+            }
+            setStatus("requesting sign-in code…")
+        } else {
+            setStatus("signing in… (browser)")
+        }
         do {
-            try await auth.signInInteractive()
+            try await auth.signInInteractive(method: method)
             setStatus("signed in")
-            Log.info("interactive sign-in ok")
+            Log.info("interactive sign-in ok (\(method))")
+            if method == .device {
+                Notifier.shared.postSystem(
+                    title: "TeamsNotifier: connected",
+                    body: "Sign-in complete. Watching for Teams messages."
+                )
+            }
         } catch AuthManager.AuthError.cancelled {
             setStatus("sign-in cancelled")
             Log.fault("sign-in timed out or was cancelled; menu Sign in to retry")
+        } catch AuthManager.AuthError.denied {
+            setStatus("sign-in denied — Sign in to retry")
+            Log.fault("device-code request declined; menu Sign in to retry")
+            Notifier.shared.postSystem(
+                title: "TeamsNotifier: sign-in denied",
+                body: "The request was declined. Use menu Sign in to retry."
+            )
+        } catch AuthManager.AuthError.expired {
+            setStatus("sign-in expired — Sign in to retry")
+            Log.fault("device code expired before approval; menu Sign in to retry")
+            Notifier.shared.postSystem(
+                title: "TeamsNotifier: sign-in code expired",
+                body: "The code timed out. Use menu Sign in to get a fresh one."
+            )
         } catch {
             setStatus("sign-in failed")
             Log.fault("sign-in failed: \(error)")
-            offerManualSignIn()
+            if method == .loopback {
+                offerManualSignIn()
+            } else {
+                Notifier.shared.postSystem(
+                    title: "TeamsNotifier: sign-in failed",
+                    body: "\(error). Menu Sign in to retry, or relaunch with --auth loopback."
+                )
+            }
         }
+    }
+
+    /// Device-code UX: code to clipboard, verification page in the default
+    /// browser, notification carrying code + URL. Menu shows waiting state.
+    private func handleDeviceChallenge(_ c: DeviceCodeFlow.Challenge) async {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(c.userCode, forType: .string)
+        let openURL = c.verificationURIComplete ?? c.verificationURI
+        if let url = URL(string: openURL) {
+            NSWorkspace.shared.open(url)
+        }
+        setStatus("waiting for sign-in…")
+        Notifier.shared.postSystem(
+            title: "Teams sign-in: enter code \(c.userCode)",
+            body: "Code \(c.userCode) copied to clipboard — enter it at \(c.verificationURI)"
+        )
+        Log.info("device challenge posted, waiting for owner approval")
     }
 
     /// Paste-code fallback window (allowed: sign-in is the one window case).
@@ -258,7 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func promptForCode() -> String? {
         let alert = NSAlert()
         alert.messageText = "Paste the redirect URL"
-        alert.informativeText = "After signing in, copy the full address-bar URL (http://127.0.0.1:8765/callback?code=...) and paste it here."
+        alert.informativeText = "After signing in, copy the full address-bar URL (http://127.0.0.1:8765/?code=...) and paste it here."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
         alert.accessoryView = field
         alert.addButton(withTitle: "OK")
