@@ -94,6 +94,43 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         legacyKinds[kind] ?? kind
     }
 
+    /// Plain-English display name per known kind; the GUI picker shows
+    /// these while storing the ids underneath. Legacy ids resolve to
+    /// their replacement's name; custom kinds show as-is.
+    public static func displayName(for kind: String) -> String {
+        switch canonicalKind(kind) {
+        case skipMyMessages: "Skip my own messages"
+        case messageTypes: "Only these message types"
+        case skipEdited: "Skip edited messages"
+        case noisyChats: "Noisy chats mention only"
+        case noisyChannel: "Noisy chats channel mentions"
+        case nameBackup: "My name as backup"
+        default: kind
+        }
+    }
+
+    /// Display names in knownKinds order (the picker's item list).
+    public static var knownDisplayNames: [String] {
+        knownKinds.map(displayName(for:))
+    }
+
+    /// Map picker text back to a stored id: a display name (exact, else
+    /// case-insensitive) becomes its kind id; anything else passes
+    /// through canonicalKind, so pasted ids (legacy included) and
+    /// custom kinds keep working.
+    public static func kind(fromDisplayName text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let hit = knownKinds.first(where: { displayName(for: $0) == trimmed }) {
+            return hit
+        }
+        if let hit = knownKinds.first(where: {
+            displayName(for: $0).caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            return hit
+        }
+        return canonicalKind(trimmed)
+    }
+
     /// notifyTypes value meaning "every type notifies". Written by the
     /// rules sync when the message-types rule is absent/disabled; honored
     /// by ChatFilter's type gate. Never appears in legacy files.
