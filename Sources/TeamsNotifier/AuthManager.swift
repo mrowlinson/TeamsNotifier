@@ -55,9 +55,12 @@ public actor AuthManager {
 
     private var aadToken: String?
     private var aadExpiry: Date?
+    /// Last seen expires_in (drives the keep-alive schedule).
+    private var aadLifetime: TimeInterval = 3600
     private var skypeToken: String?
     private var skypeExpiry: Date?
     private var chatServiceBase: String = TeamsConstants.defaultChatService
+    private var keepAliveTask: Task<Void, Never>?
 
     /// Fired when the refresh token dies (expiry/revocation). App posts a
     /// "sign-in needed" notification and reopens sign-in.
@@ -93,9 +96,59 @@ public actor AuthManager {
     }
 
     public func signOut() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
         store.clearRefreshToken()
         aadToken = nil
         skypeToken = nil
+    }
+
+    // MARK: - Keep-alive
+
+    /// Proactive refresh loop: force-refreshes AAD + skype tokens at
+    /// ~50% lifetime (KeepAlive math) so the session rolls indefinitely
+    /// instead of dying at expiry. Transient failures retry with backoff;
+    /// unrecoverable ones (invalid_grant/interaction_required) flow through
+    /// the existing needsSignIn path (notify + reopen sign-in) and stop the
+    /// loop. Idempotent; restart after interactive sign-in.
+    public func startKeepAlive() {
+        guard keepAliveTask == nil else { return }
+        keepAliveTask = Task { await self.keepAliveLoop() }
+    }
+
+    public func stopKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
+    }
+
+    private func keepAliveLoop() async {
+        defer { keepAliveTask = nil }
+        var failures = 0
+        while !Task.isCancelled {
+            let delay = failures > 0
+                ? KeepAlive.retryDelay(failures: failures)
+                : KeepAlive.refreshDelay(expiresIn: aadLifetime)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            if Task.isCancelled { break }
+            do {
+                try await keepAliveRefresh()
+                failures = 0
+            } catch AuthError.needsSignIn {
+                break // already notified; App reopens sign-in
+            } catch is CancellationError {
+                break
+            } catch {
+                failures += 1
+                Log.fault("keep-alive refresh failed (\(error)), retry in \(Int(KeepAlive.retryDelay(failures: failures)))s")
+            }
+        }
+    }
+
+    /// One forced refresh cycle (AAD + skype), always hitting the network.
+    public func keepAliveRefresh() async throws {
+        try await ensureAADToken(force: true)
+        try await exchangeSkypeToken()
+        Log.info("keep-alive: tokens refreshed proactively")
     }
 
     // MARK: - Steady state
@@ -119,8 +172,8 @@ public actor AuthManager {
         return try await ensureSkypeCredentials()
     }
 
-    private func ensureAADToken() async throws {
-        if let t = aadToken, let exp = aadExpiry, exp > Date().addingTimeInterval(300) {
+    private func ensureAADToken(force: Bool = false) async throws {
+        if !force, let t = aadToken, let exp = aadExpiry, exp > Date().addingTimeInterval(300) {
             _ = t
             return
         }
@@ -147,7 +200,8 @@ public actor AuthManager {
             throw AuthError.protocolError("token refresh response missing access_token")
         }
         aadToken = access
-        aadExpiry = expiry(from: obj)
+        aadLifetime = lifetime(from: obj)
+        aadExpiry = Date().addingTimeInterval(aadLifetime)
         if let rolled = obj["refresh_token"] as? String, !rolled.isEmpty {
             store.writeRefreshToken(rolled)
         }
@@ -394,12 +448,13 @@ public actor AuthManager {
     private func storeFreshTokens(access: String, refresh: String, expiresIn: Int?, raw: [String: Any]? = nil) async throws {
         aadToken = access
         if let secs = expiresIn {
-            aadExpiry = Date().addingTimeInterval(TimeInterval(secs))
+            aadLifetime = TimeInterval(secs)
         } else if let raw {
-            aadExpiry = expiry(from: raw)
+            aadLifetime = lifetime(from: raw)
         } else {
-            aadExpiry = Date().addingTimeInterval(3600)
+            aadLifetime = 3600
         }
+        aadExpiry = Date().addingTimeInterval(aadLifetime)
         store.writeRefreshToken(refresh)
         learnOwner(from: access)
         try await exchangeSkypeToken()
@@ -455,13 +510,15 @@ public actor AuthManager {
         return obj
     }
 
+    private func lifetime(from obj: [String: Any]) -> TimeInterval {
+        if let s = obj["expires_in"] as? Int { return TimeInterval(s) }
+        else if let s = obj["expires_in"] as? Double { return s }
+        else if let s = obj["expires_in"] as? String, let v = Double(s) { return v }
+        else { return 3600 }
+    }
+
     private func expiry(from obj: [String: Any]) -> Date {
-        let secs: TimeInterval
-        if let s = obj["expires_in"] as? Int { secs = TimeInterval(s) }
-        else if let s = obj["expires_in"] as? Double { secs = s }
-        else if let s = obj["expires_in"] as? String, let v = Double(s) { secs = v }
-        else { secs = 3600 }
-        return Date().addingTimeInterval(secs)
+        Date().addingTimeInterval(lifetime(from: obj))
     }
 }
 

@@ -29,6 +29,7 @@ public actor TrouterClient {
     private var sequence = 1
     private var seenIDs: [String] = [] // ring, cap 10 (purple-teams buffer)
     private var endpointID = UUID().uuidString
+    private var lossGuard = MessageLossGuard()
 
     public init(
         auth: AuthManager,
@@ -264,10 +265,17 @@ public actor TrouterClient {
                 try await send(ws, ack)
             }
             if TrouterFrame.isMessageLoss(frame) {
-                Log.fault("trouter.message_loss, re-registering worker")
-                let creds = try await auth.ensureSkypeCredentials()
-                let aad = try await currentAADToken()
-                try await registerOne(TeamsConstants.messageLossResubscribe, surl: surl, skypeToken: creds.skypeToken, aadToken: aad)
+                switch lossGuard.recordLoss(now: Date()) {
+                case .reregister:
+                    Log.info("trouter.message_loss, re-registering worker")
+                    let creds = try await auth.ensureSkypeCredentials()
+                    let aad = try await currentAADToken()
+                    try await registerOne(TeamsConstants.messageLossResubscribe, surl: surl, skypeToken: creds.skypeToken, aadToken: aad)
+                case .ignoreSettle:
+                    Log.debug("trouter.message_loss within settle window, ignoring")
+                case .hold:
+                    Log.fault("trouter.message_loss storm: holding re-register (cap \(lossGuard.maxConsecutive)/\(Int(lossGuard.settleWindow))s)")
+                }
             }
             return
         }

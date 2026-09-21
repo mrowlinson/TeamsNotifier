@@ -32,6 +32,12 @@ public final class Notifier: NSObject, @unchecked Sendable {
         await center.notificationSettings().authorizationStatus
     }
 
+    /// Full per-setting state (alert/sound/badge + style). Authorization can
+    /// read authorized while the app is switched off in Settings.
+    public func settings() async -> UNNotificationSettings {
+        await center.notificationSettings()
+    }
+
     public func post(title: String, body: String, id: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title

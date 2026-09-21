@@ -30,19 +30,42 @@ public struct Config: Codable, Sendable {
     /// Message types that notify (prefix match on messagetype's first
     /// segment, e.g. "Text", "RichText"). Default ["Text", "RichText"].
     public var notifyTypes: [String]
+    /// Mute switch (menu toggle, persisted). Suppresses message
+    /// notifications only — system/sign-in-needed notifications still show.
+    /// Default false.
+    public var muted: Bool
 
     public init(
         owner: Owner = Owner(),
         loudSubstring: String = "BTAC",
         notifyOnEdit: Bool = false,
         skipOwnMessages: Bool = true,
-        notifyTypes: [String] = ["Text", "RichText"]
+        notifyTypes: [String] = ["Text", "RichText"],
+        muted: Bool = false
     ) {
         self.owner = owner
         self.loudSubstring = loudSubstring
         self.notifyOnEdit = notifyOnEdit
         self.skipOwnMessages = skipOwnMessages
         self.notifyTypes = notifyTypes
+        self.muted = muted
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case owner, loudSubstring, notifyOnEdit, skipOwnMessages, notifyTypes, muted
+    }
+
+    /// Tolerant decode: configs written before `muted` existed (or missing
+    /// any key) still load, missing keys fall back to defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Config.default
+        owner = (try? c.decodeIfPresent(Owner.self, forKey: .owner)) ?? d.owner
+        loudSubstring = (try? c.decodeIfPresent(String.self, forKey: .loudSubstring)) ?? d.loudSubstring
+        notifyOnEdit = (try? c.decodeIfPresent(Bool.self, forKey: .notifyOnEdit)) ?? d.notifyOnEdit
+        skipOwnMessages = (try? c.decodeIfPresent(Bool.self, forKey: .skipOwnMessages)) ?? d.skipOwnMessages
+        notifyTypes = (try? c.decodeIfPresent([String].self, forKey: .notifyTypes)) ?? d.notifyTypes
+        muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
     }
 
     public static var `default`: Config {

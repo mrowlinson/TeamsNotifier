@@ -21,7 +21,7 @@ public enum Log {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         } catch {
-            fputs("[teamsnotifier:FAULT] log dir create failed: \(error)\n", stderr)
+            fputs(LogFormat.line(tag: "[teamsnotifier:FAULT]", message: "log dir create failed: \(error)") + "\n", stderr)
             return
         }
         if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
@@ -34,7 +34,7 @@ public enum Log {
                 try fh.close()
                 try tail.write(to: url, options: .atomic)
             } catch {
-                fputs("[teamsnotifier:FAULT] log rotation failed: \(error)\n", stderr)
+                fputs(LogFormat.line(tag: "[teamsnotifier:FAULT]", message: "log rotation failed: \(error)") + "\n", stderr)
                 try? fh.close()
             }
         }
@@ -49,7 +49,7 @@ public enum Log {
             try handle?.seekToEnd()
         } catch {
             handle = nil
-            fputs("[teamsnotifier:FAULT] log file open failed: \(error)\n", stderr)
+            fputs(LogFormat.line(tag: "[teamsnotifier:FAULT]", message: "log file open failed: \(error)") + "\n", stderr)
         }
     }
 
@@ -66,7 +66,8 @@ public enum Log {
         return Array(lines.suffix(n))
     }
 
-    private static func emit(_ line: String) {
+    private static func emit(tag: String, _ msg: String) {
+        let line = LogFormat.line(tag: tag, message: msg)
         fputs(line + "\n", stderr)
         guard let data = (line + "\n").data(using: .utf8) else { return }
         lock.lock()
@@ -75,15 +76,15 @@ public enum Log {
     }
 
     public static func info(_ msg: String) {
-        emit("[teamsnotifier] \(msg)")
+        emit(tag: "[teamsnotifier]", msg)
     }
 
     public static func debug(_ msg: String) {
-        if verbose { emit("[teamsnotifier:debug] \(msg)") }
+        if verbose { emit(tag: "[teamsnotifier:debug]", msg) }
     }
 
     /// Loud failure: stderr + file + caller posts user-visible notification.
     public static func fault(_ msg: String) {
-        emit("[teamsnotifier:FAULT] \(msg)")
+        emit(tag: "[teamsnotifier:FAULT]", msg)
     }
 }

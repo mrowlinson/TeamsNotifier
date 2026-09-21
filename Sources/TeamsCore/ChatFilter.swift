@@ -1,5 +1,7 @@
 /// Notify/skip decision. Pure; every branch covered by tests.
 ///
+/// - Muted: everything skipped (reason "muted"). System/sign-in-needed
+///   notifications bypass this filter entirely (posted directly).
 /// - Own messages: skipped (when skipOwnMessages).
 /// - Non-text types (Control/Typing, ThreadActivity, ...): skipped unless
 ///   listed in notifyTypes.
@@ -14,6 +16,10 @@ public enum ChatFilter {
         case skip(reason: String)
     }
 
+    /// Skip reason used for the mute gate. App logs "muted, suppressed"
+    /// on this reason (spec string).
+    public static let mutedReason = "muted"
+
     public static func decide(
         message: EventMessage.Message,
         isEdit: Bool,
@@ -21,6 +27,10 @@ public enum ChatFilter {
         ownerMRI: String?,
         config: Config
     ) -> Decision {
+        // Mute gate first: suppresses all message notifications.
+        if config.muted {
+            return .skip(reason: mutedReason)
+        }
         // Own message?
         if config.skipOwnMessages, isOwnMessage(message, ownerMRI: ownerMRI, ownerDisplayName: config.owner.displayName) {
             return .skip(reason: "own-message")
