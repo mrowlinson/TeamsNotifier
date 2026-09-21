@@ -129,6 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config = .default
         }
         for w in config.normalizeSchedule() { Log.fault(w) }
+        if config.didMigrateSchedule {
+            Log.info("migrated owner schedule (\(config.muteWindows.count) entries) to \(flags.configPath)")
+        }
         if let tz = TimeZone(identifier: config.scheduleTZ) {
             scheduleTimeZone = tz
         } else {
@@ -403,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mute.state = muteState.effective(scheduled: scheduledMuted(at: Date())) ? .on : .off
         menu.addItem(mute)
         muteMenuItem = mute
+        menu.addItem(NSMenuItem(title: "Edit schedule…", action: #selector(menuEditSchedule), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show log", action: #selector(menuShowLog), keyEquivalent: ""))
@@ -554,6 +558,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         muteState.setOverride(!effective, scheduledNow: sched, nextBoundary: next)
         Log.info(!effective ? "muted (manual)" : "unmuted (manual)")
         refreshMuteUI(now: now)
+    }
+
+    @objc private func menuEditSchedule() {
+        ScheduleWindowController.show(current: config.muteWindows) { [weak self] windows in
+            guard let self else { return }
+            self.config.muteWindows = windows
+            self.config.didMigrateSchedule = false
+            do {
+                try self.config.save(to: self.flags.configPath)
+            } catch {
+                Log.fault("schedule save failed (\(self.flags.configPath)): \(error)")
+            }
+            Log.info("schedule saved (\(windows.count) entries, \(windows.filter(\.enabled).count) on)")
+            self.refreshMuteUI(now: Date())
+        }
     }
 
     @objc private func menuSignIn() {

@@ -10,16 +10,38 @@ public struct MuteWindow: Codable, Sendable, Equatable {
     public var days: [Int]
     public var start: String
     public var end: String
+    /// Per-entry switch (GUI checkbox). Disabled windows are skipped by
+    /// the resolver and transitions. Default true.
+    public var enabled: Bool
 
-    public init(days: [Int], start: String, end: String) {
+    public init(days: [Int], start: String, end: String, enabled: Bool = true) {
         self.days = days
         self.start = start
         self.end = end
+        self.enabled = enabled
     }
 
-    /// Default schedule: muted Mon-Fri 00:00-07:50 + 16:40-24:00 and all
-    /// day Sat/Sun; unmuted Mon-Fri 07:50-16:40.
-    public static var defaults: [MuteWindow] {
+    enum CodingKeys: String, CodingKey {
+        case days, start, end, enabled
+    }
+
+    /// Tolerant decode: entries stored before `enabled` existed load as
+    /// enabled (missing key), so old configs keep working.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        days = try c.decode([Int].self, forKey: .days)
+        start = try c.decode(String.self, forKey: .start)
+        end = try c.decode(String.self, forKey: .end)
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
+    }
+
+    /// Owner's long-standing entries: muted Mon-Fri 00:00-07:50 +
+    /// 16:40-24:00 and all day Sat/Sun; unmuted Mon-Fri 07:50-16:40.
+    ///
+    /// Migration source ONLY for configs that predate stored schedules
+    /// (existing installs). Never seeded for fresh installs: those get
+    /// an empty schedule (see Config).
+    public static var ownerSchedule: [MuteWindow] {
         [
             MuteWindow(days: [2, 3, 4, 5, 6], start: "16:40", end: "24:00"),
             MuteWindow(days: [2, 3, 4, 5, 6], start: "00:00", end: "07:50"),
@@ -58,6 +80,25 @@ public struct MuteWindow: Codable, Sendable, Equatable {
     }
 
     public var isValid: Bool { issue() == nil }
+
+    /// Short day names by Calendar weekday (index 1=Sun ... 7=Sat).
+    public static let dayNames = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    /// "Mon–Fri" for a contiguous run, "Sat, Sun" otherwise, "—" when
+    /// no valid day is set. Sorted, deduped (for the GUI table).
+    public var daysLabel: String {
+        let ds = Array(Set(days.filter { (1 ... 7).contains($0) })).sorted()
+        guard let first = ds.first, let last = ds.last else { return "—" }
+        if ds.count > 1, last - first == ds.count - 1 {
+            return "\(MuteWindow.dayNames[first])–\(MuteWindow.dayNames[last])"
+        }
+        return ds.map { MuteWindow.dayNames[$0] }.joined(separator: ", ")
+    }
+
+    /// One-line row text for the GUI table, e.g. "Mon–Fri 16:40–24:00".
+    public var summary: String {
+        "\(daysLabel) \(start)–\(end)"
+    }
 }
 
 /// Pure scheduled-mute resolver. All functions take an explicit time zone
@@ -77,7 +118,7 @@ public enum MuteSchedule {
         let weekday = cal.component(.weekday, from: date)
         let comps = cal.dateComponents([.hour, .minute], from: date)
         let mins = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
-        for w in windows {
+        for w in windows where w.enabled {
             guard w.days.contains(weekday),
                   let s = MuteWindow.minutes(w.start),
                   let e = MuteWindow.minutes(w.end)
@@ -102,7 +143,7 @@ public enum MuteSchedule {
         for offset in 0 ..< 9 {
             guard let day = cal.date(byAdding: .day, value: offset, to: dayStart) else { continue }
             let weekday = cal.component(.weekday, from: day)
-            for w in windows where w.days.contains(weekday) {
+            for w in windows where w.enabled && w.days.contains(weekday) {
                 guard let s = MuteWindow.minutes(w.start),
                       let e = MuteWindow.minutes(w.end),
                       s < e

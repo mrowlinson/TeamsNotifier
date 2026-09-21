@@ -68,13 +68,17 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
   Typing indicators, member-join activity, calls never notify.
 - `notifyOnEdit` (default false): also notify on MessageUpdate edits.
 - `skipOwnMessages` (default true).
-- Scheduled mute (default: muted Mon–Fri 00:00–07:50 + 16:40–24:00 ET
-  + all day Sat/Sun; unmuted Mon–Fri 07:50–16:40):
-  `muteWindows: [{days:[2,3,4,5,6],start:"16:40",end:"24:00"},
+- Scheduled mute, edited in the GUI (menu `Edit schedule…`: list, add,
+  edit, remove entries, per-entry on/off switch, persisted to the config
+  file): `muteWindows: [{days:[2,3,4,5,6],start:"16:40",end:"24:00"},
   {days:[2,3,4,5,6],start:"00:00",end:"07:50"},
   {days:[1,7],start:"00:00",end:"24:00"}]` (days = Calendar weekday,
-  Sun=1), `scheduleTZ` (default `America/New_York`). Empty `muteWindows`
-  disables scheduled mute. A manual Mute-toggle during a window holds until
+  Sun=1; each entry also takes `enabled`), `scheduleTZ` (default
+  `America/New_York`). Fresh installs start with an EMPTY schedule
+  (never muted); configs that predate stored schedules migrate the
+  owner's entries (muted Mon–Fri 00:00–07:50 + 16:40–24:00 ET + all day
+  Sat/Sun) to the file on first load. Empty `muteWindows` disables
+  scheduled mute. A manual Mute-toggle during a window holds until
   the next schedule boundary, then the schedule resumes; toggles are
   memory-only (fresh launches follow the schedule). Menu status shows the
   reason (`Muted · schedule`, `Unmuted · manual until 4:40 PM ET`, ...).
