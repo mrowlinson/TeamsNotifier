@@ -72,6 +72,8 @@ struct NotifyRulesTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.loudSubstring == "")
         #expect(c.notifyTypes == [NotifyRule.allowAllMarker])
+        #expect(c.noisyChannelMentions == false)
+        #expect(c.matchByDisplayName == false)
         let d = ChatFilter.decide(
             message: message(), isEdit: false, chatDisplayName: "Alice",
             ownerMRI: ownerMRI, config: c)
@@ -90,24 +92,24 @@ struct NotifyRulesTests {
         #expect(kinds == NotifyRule.knownKinds)
         let allOn = migrated.notifyRules.allSatisfy { $0.enabled }
         #expect(allOn)
-        let loudValue = migrated.notifyRules.first(where: { $0.kind == NotifyRule.loudChat })?.value
+        let loudValue = migrated.notifyRules.first(where: { $0.kind == NotifyRule.noisyChats })?.value
         #expect(loudValue == "BTAC")
-        let typesValue = migrated.notifyRules.first(where: { $0.kind == NotifyRule.allowTypes })?.value
+        let typesValue = migrated.notifyRules.first(where: { $0.kind == NotifyRule.messageTypes })?.value
         #expect(typesValue == "Text, RichText")
         expectSameDecisions(migrated, Config())
     }
 
     @Test func legacyCustomScalarsPreservedExactly() throws {
         // Custom legacy settings migrate to rules encoding the same
-        // effective behavior (skip-own off, edits on, custom types/loud).
+        // effective behavior (skip-my-own-messages off, edits on, custom types/loud).
         let json = #"{"loudSubstring":"FOO","notifyOnEdit":true,"skipOwnMessages":false,"notifyTypes":["Text"]}"#
         let migrated = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         #expect(migrated.didMigrateRules == true)
         let byKind = Dictionary(uniqueKeysWithValues: migrated.notifyRules.map { ($0.kind, $0) })
-        #expect(byKind[NotifyRule.skipOwn]?.enabled == false)
-        #expect(byKind[NotifyRule.skipEdits]?.enabled == false)
-        #expect(byKind[NotifyRule.allowTypes]?.value == "Text")
-        #expect(byKind[NotifyRule.loudChat]?.value == "FOO")
+        #expect(byKind[NotifyRule.skipMyMessages]?.enabled == false)
+        #expect(byKind[NotifyRule.skipEdited]?.enabled == false)
+        #expect(byKind[NotifyRule.messageTypes]?.value == "Text")
+        #expect(byKind[NotifyRule.noisyChats]?.value == "FOO")
         var legacy = Config()
         legacy.loudSubstring = "FOO"
         legacy.notifyOnEdit = true
@@ -119,6 +121,8 @@ struct NotifyRulesTests {
         #expect(migrated.notifyOnEdit == true)
         #expect(migrated.notifyTypes == ["Text"])
         #expect(migrated.loudSubstring == "FOO")
+        #expect(migrated.noisyChannelMentions == true)
+        #expect(migrated.matchByDisplayName == true)
     }
 
     @Test func migrationPersistsToStoreOnFirstLoad() throws {
@@ -166,8 +170,8 @@ struct NotifyRulesTests {
     @Test func perRuleToggleRoundTrips() throws {
         var c = Config.default
         c.notifyRules = [
-            NotifyRule(kind: NotifyRule.skipOwn, enabled: false),
-            NotifyRule(kind: NotifyRule.loudChat, value: "BTAC", enabled: false),
+            NotifyRule(kind: NotifyRule.skipMyMessages, enabled: false),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: false),
         ]
         c.rulesStored = true
         c.applyRules()
@@ -186,6 +190,8 @@ struct NotifyRulesTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.loudSubstring == "")
         #expect(c.notifyTypes == ["*"])
+        #expect(c.noisyChannelMentions == false)
+        #expect(c.matchByDisplayName == false)
         // Everything notifies: own, edit, control type, bare loud chat.
         let cases: [(EventMessage.Message, Bool, String)] = [
             (message(senderMRI: ownerMRI, senderName: ownerName), false, "Alice"),
@@ -202,14 +208,18 @@ struct NotifyRulesTests {
     @Test func disabledRulesSwitchGatesOff() throws {
         var base = Config.default
         base.notifyRules = [
-            NotifyRule(kind: NotifyRule.skipOwn, enabled: false),
-            NotifyRule(kind: NotifyRule.allowTypes, value: "Text, RichText", enabled: false),
-            NotifyRule(kind: NotifyRule.skipEdits, enabled: false),
-            NotifyRule(kind: NotifyRule.loudChat, value: "BTAC", enabled: false),
+            NotifyRule(kind: NotifyRule.skipMyMessages, enabled: false),
+            NotifyRule(kind: NotifyRule.messageTypes, value: "Text, RichText", enabled: false),
+            NotifyRule(kind: NotifyRule.skipEdited, enabled: false),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: false),
+            NotifyRule(kind: NotifyRule.noisyChannel, enabled: false),
+            NotifyRule(kind: NotifyRule.nameBackup, enabled: false),
         ]
         base.rulesStored = true
         base.applyRules()
         #expect(base.notifyTypes == ["*"])
+        #expect(base.noisyChannelMentions == false)
+        #expect(base.matchByDisplayName == false)
         let own = ChatFilter.decide(
             message: message(senderMRI: ownerMRI, senderName: ownerName),
             isEdit: false, chatDisplayName: "Alice", ownerMRI: ownerMRI, config: base)
@@ -248,8 +258,8 @@ struct NotifyRulesTests {
     @Test func firstMatchWins() {
         var c = Config()
         c.notifyRules = [
-            NotifyRule(kind: NotifyRule.skipOwn, enabled: false),
-            NotifyRule(kind: NotifyRule.skipOwn, enabled: true),
+            NotifyRule(kind: NotifyRule.skipMyMessages, enabled: false),
+            NotifyRule(kind: NotifyRule.skipMyMessages, enabled: true),
         ]
         c.applyRules()
         #expect(c.skipOwnMessages == false)
@@ -258,15 +268,17 @@ struct NotifyRulesTests {
     // MARK: validation + tolerance
 
     @Test func ruleValidation() {
-        #expect(NotifyRule(kind: NotifyRule.skipOwn).isValid)
-        #expect(NotifyRule(kind: NotifyRule.skipEdits).isValid)
-        #expect(NotifyRule(kind: NotifyRule.allowTypes, value: "Text").isValid)
-        #expect(NotifyRule(kind: NotifyRule.loudChat, value: "BTAC").isValid)
+        #expect(NotifyRule(kind: NotifyRule.skipMyMessages).isValid)
+        #expect(NotifyRule(kind: NotifyRule.skipEdited).isValid)
+        #expect(NotifyRule(kind: NotifyRule.messageTypes, value: "Text").isValid)
+        #expect(NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC").isValid)
+        #expect(NotifyRule(kind: NotifyRule.noisyChannel).isValid)
+        #expect(NotifyRule(kind: NotifyRule.nameBackup).isValid)
         #expect(NotifyRule(kind: "anything-new").isValid)
         #expect(NotifyRule(kind: "anything-new", value: "").isValid)
         #expect(!NotifyRule(kind: "").isValid)
-        #expect(!NotifyRule(kind: NotifyRule.allowTypes, value: "  ").isValid)
-        #expect(!NotifyRule(kind: NotifyRule.loudChat, value: "").isValid)
+        #expect(!NotifyRule(kind: NotifyRule.messageTypes, value: "  ").isValid)
+        #expect(!NotifyRule(kind: NotifyRule.noisyChats, value: "").isValid)
     }
 
     @Test func parseTypes() {
@@ -281,7 +293,7 @@ struct NotifyRulesTests {
         var c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         let remigKinds = c.notifyRules.map(\.kind)
         #expect(remigKinds == NotifyRule.knownKinds)
-        let remigTypes = c.notifyRules.first(where: { $0.kind == NotifyRule.allowTypes })?.value
+        let remigTypes = c.notifyRules.first(where: { $0.kind == NotifyRule.messageTypes })?.value
         #expect(remigTypes == "Text")
         let w = c.normalizeRules()
         #expect(w.count == 1)
@@ -289,17 +301,17 @@ struct NotifyRulesTests {
     }
 
     @Test func invalidKnownRulesDroppedWithWarning() throws {
-        let json = #"{"notifyRules":[{"kind":"loud-chat","value":""},{"kind":"allow-types","value":"Text"},{"kind":"","value":"x"}]}"#
+        let json = #"{"notifyRules":[{"kind":"noisy-chats-mention-only","value":""},{"kind":"only-these-message-types","value":"Text"},{"kind":"","value":"x"}]}"#
         var c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         let w = c.normalizeRules()
         #expect(w.count == 2)
-        #expect(c.notifyRules == [NotifyRule(kind: "allow-types", value: "Text")])
+        #expect(c.notifyRules == [NotifyRule(kind: "only-these-message-types", value: "Text")])
     }
 
     @Test func enabledDefaultsTrueWhenMissing() throws {
-        let json = #"{"notifyRules":[{"kind":"skip-own"}]}"#
+        let json = #"{"notifyRules":[{"kind":"skip-my-own-messages"}]}"#
         let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
-        #expect(c.notifyRules == [NotifyRule(kind: "skip-own", value: "", enabled: true)])
+        #expect(c.notifyRules == [NotifyRule(kind: "skip-my-own-messages", value: "", enabled: true)])
     }
 
     @Test func migratedScalarsMatchLegacyFills() throws {
@@ -307,9 +319,9 @@ struct NotifyRulesTests {
         // BTAC, types [] -> Text/RichText (in the migrated rules).
         let json = #"{"loudSubstring":"","notifyTypes":[]}"#
         let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
-        let fillLoud = c.notifyRules.first(where: { $0.kind == NotifyRule.loudChat })?.value
+        let fillLoud = c.notifyRules.first(where: { $0.kind == NotifyRule.noisyChats })?.value
         #expect(fillLoud == "BTAC")
-        let fillTypes = c.notifyRules.first(where: { $0.kind == NotifyRule.allowTypes })?.value
+        let fillTypes = c.notifyRules.first(where: { $0.kind == NotifyRule.messageTypes })?.value
         #expect(fillTypes == "Text, RichText")
     }
 }

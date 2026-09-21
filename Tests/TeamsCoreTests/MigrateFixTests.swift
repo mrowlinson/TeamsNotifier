@@ -17,13 +17,13 @@ struct MigrateFixTests {
         // Owner schedule migrated.
         #expect(c.muteWindows == MuteWindow.ownerSchedule)
         #expect(c.didMigrateSchedule == true)
-        // 4 stock owner rules migrated (exact hardcoded legacy behavior).
+        // 6 stock owner rules migrated (exact hardcoded legacy behavior).
         #expect(c.notifyRules.map(\.kind) == NotifyRule.knownKinds)
-        #expect(c.notifyRules.count == 4)
+        #expect(c.notifyRules.count == 6)
         #expect(c.notifyRules.allSatisfy { $0.enabled })
         let byKind = Dictionary(uniqueKeysWithValues: c.notifyRules.map { ($0.kind, $0) })
-        #expect(byKind[NotifyRule.loudChat]?.value == "BTAC")
-        #expect(byKind[NotifyRule.allowTypes]?.value == "Text, RichText")
+        #expect(byKind[NotifyRule.noisyChats]?.value == "BTAC")
+        #expect(byKind[NotifyRule.messageTypes]?.value == "Text, RichText")
         #expect(c.didMigrateRules == true)
         #expect(c.rulesStored == false)
         // Scalars reflect owner behavior (not permissive blank).
@@ -31,6 +31,8 @@ struct MigrateFixTests {
         #expect(c.notifyOnEdit == false)
         #expect(c.loudSubstring == "BTAC")
         #expect(c.notifyTypes == ["Text", "RichText"])
+        #expect(c.noisyChannelMentions == true)
+        #expect(c.matchByDisplayName == true)
         // Persisted: second load finds stored keys (no re-migration).
         let stored = try String(contentsOfFile: path, encoding: .utf8)
         #expect(stored.contains("muteWindows"))
@@ -55,6 +57,8 @@ struct MigrateFixTests {
         #expect(c.notifyOnEdit == true)
         #expect(c.loudSubstring == "")
         #expect(c.notifyTypes == [NotifyRule.allowAllMarker])
+        #expect(c.noisyChannelMentions == false)
+        #expect(c.matchByDisplayName == false)
         // Fresh load writes nothing.
         #expect(FileManager.default.fileExists(atPath: missing) == false)
 

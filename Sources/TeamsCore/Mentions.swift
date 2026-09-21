@@ -77,16 +77,17 @@ public enum Mentions {
     // MARK: Classify
 
     /// Owner mention? MRI match preferred (config carries owner MRI, learned
-    /// from the AAD token's oid claim). Display-name match is the fallback
-    /// when protocol data lacks an MRI (content-span fallback path).
-    public static func mentionsOwner(_ mentions: [Mention], ownerMRI: String?, ownerDisplayName: String) -> Bool {
+    /// from the AAD token's oid claim). Display-name match is the backup
+    /// when protocol data lacks an MRI (content-span fallback path),
+    /// unless `matchByName` is false (IDs only).
+    public static func mentionsOwner(_ mentions: [Mention], ownerMRI: String?, ownerDisplayName: String, matchByName: Bool = true) -> Bool {
         let wantName = ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         for m in mentions {
             if let ownerMRI, !ownerMRI.isEmpty, let mri = m.mri, !mri.isEmpty {
                 if mri.caseInsensitiveCompare(ownerMRI) == .orderedSame { return true }
                 continue // MRI present but different: not owner; do not name-match.
             }
-            if !wantName.isEmpty, m.displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wantName {
+            if matchByName, !wantName.isEmpty, m.displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wantName {
                 return true
             }
         }

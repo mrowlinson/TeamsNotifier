@@ -27,6 +27,13 @@ public struct Config: Codable, Sendable {
     public var notifyOnEdit: Bool
     /// Skip messages sent by the owner. Default true.
     public var skipOwnMessages: Bool
+    /// In noisy (mention-only) chats, @channel/@team/@everyone mentions
+    /// also notify. Default true (the long-standing behavior).
+    public var noisyChannelMentions: Bool
+    /// When Teams omits sender/mention IDs, fall back to comparing the
+    /// owner's display name (own-message + owner-mention matching).
+    /// Default true (the long-standing behavior).
+    public var matchByDisplayName: Bool
     /// Message types that notify (prefix match on messagetype's first
     /// segment, e.g. "Text", "RichText"). Default ["Text", "RichText"].
     public var notifyTypes: [String]
@@ -74,6 +81,8 @@ public struct Config: Codable, Sendable {
         loudSubstring: String = "BTAC",
         notifyOnEdit: Bool = false,
         skipOwnMessages: Bool = true,
+        noisyChannelMentions: Bool = true,
+        matchByDisplayName: Bool = true,
         notifyTypes: [String] = ["Text", "RichText"],
         muted: Bool = false,
         muteWindows: [MuteWindow] = [],
@@ -84,6 +93,8 @@ public struct Config: Codable, Sendable {
         self.loudSubstring = loudSubstring
         self.notifyOnEdit = notifyOnEdit
         self.skipOwnMessages = skipOwnMessages
+        self.noisyChannelMentions = noisyChannelMentions
+        self.matchByDisplayName = matchByDisplayName
         self.notifyTypes = notifyTypes
         self.muted = muted
         self.muteWindows = muteWindows
@@ -93,6 +104,7 @@ public struct Config: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case owner, loudSubstring, notifyOnEdit, skipOwnMessages, notifyTypes, muted
+        case noisyChannelMentions, matchByDisplayName
         case muteWindows, scheduleTZ
         case notifyRules
     }
@@ -106,6 +118,8 @@ public struct Config: Codable, Sendable {
         loudSubstring = (try? c.decodeIfPresent(String.self, forKey: .loudSubstring)) ?? d.loudSubstring
         notifyOnEdit = (try? c.decodeIfPresent(Bool.self, forKey: .notifyOnEdit)) ?? d.notifyOnEdit
         skipOwnMessages = (try? c.decodeIfPresent(Bool.self, forKey: .skipOwnMessages)) ?? d.skipOwnMessages
+        noisyChannelMentions = (try? c.decodeIfPresent(Bool.self, forKey: .noisyChannelMentions)) ?? d.noisyChannelMentions
+        matchByDisplayName = (try? c.decodeIfPresent(Bool.self, forKey: .matchByDisplayName)) ?? d.matchByDisplayName
         notifyTypes = (try? c.decodeIfPresent([String].self, forKey: .notifyTypes)) ?? d.notifyTypes
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
         // Schedule keys: present-but-undecodable falls back to the owner
@@ -168,31 +182,46 @@ public struct Config: Codable, Sendable {
     /// Sync the legacy filter scalars FROM the stored rules. Total: every
     /// known kind resolves here (first match wins), so after this call
     /// the scalars reflect exactly what the list says. Absent/disabled
-    /// known rules switch their gate off (allow-types then allows every
+    /// known rules switch their gate off (message-types then allows every
     /// type via the "*" marker). Unknown kinds are preserved untouched.
     public mutating func applyRules() {
-        if let r = notifyRules.first(where: { $0.kind == NotifyRule.skipOwn }) {
+        // Canonical matching: in-memory legacy ids (never from decode,
+        // which maps them) still resolve to their replacement's gate.
+        func first(_ kind: String) -> NotifyRule? {
+            notifyRules.first(where: { NotifyRule.canonicalKind($0.kind) == kind })
+        }
+        if let r = first(NotifyRule.skipMyMessages) {
             skipOwnMessages = r.enabled
         } else {
             skipOwnMessages = false
         }
-        if let r = notifyRules.first(where: { $0.kind == NotifyRule.skipEdits }) {
+        if let r = first(NotifyRule.skipEdited) {
             notifyOnEdit = !r.enabled
         } else {
             notifyOnEdit = true
         }
-        if let r = notifyRules.first(where: { $0.kind == NotifyRule.loudChat }),
+        if let r = first(NotifyRule.noisyChats),
            r.enabled, !r.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             loudSubstring = r.value
         } else {
             loudSubstring = ""
         }
-        if let r = notifyRules.first(where: { $0.kind == NotifyRule.allowTypes }), r.enabled {
+        if let r = first(NotifyRule.messageTypes), r.enabled {
             let types = NotifyRule.parseTypes(r.value)
             notifyTypes = types.isEmpty ? [NotifyRule.allowAllMarker] : types
         } else {
             notifyTypes = [NotifyRule.allowAllMarker]
+        }
+        if let r = first(NotifyRule.noisyChannel) {
+            noisyChannelMentions = r.enabled
+        } else {
+            noisyChannelMentions = false
+        }
+        if let r = first(NotifyRule.nameBackup) {
+            matchByDisplayName = r.enabled
+        } else {
+            matchByDisplayName = false
         }
     }
 

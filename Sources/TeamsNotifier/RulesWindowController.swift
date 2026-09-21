@@ -40,6 +40,7 @@ final class RulesWindowController: NSWindowController {
     private let addButton = NSButton(title: "Add", target: nil, action: nil)
     private let removeButton = NSButton(title: "Remove", target: nil, action: nil)
     private let kindCombo = NSComboBox()
+    private let valueLabel = NSTextField(labelWithString: "Value:")
     private let valueField = NSTextField()
     private let enabledCheck = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
     private let hintLabel = NSTextField(labelWithString: "")
@@ -52,10 +53,10 @@ final class RulesWindowController: NSWindowController {
         case on, kind, value
     }
 
-    /// Template for the Add button: always valid (skip-own ignores its
-    /// value), the owner reshapes kind/value. Not a seed: only stored on
-    /// Save, and fresh installs open blank.
-    private static let template = NotifyRule(kind: NotifyRule.skipOwn)
+    /// Template for the Add button: always valid (skip-my-own-messages
+    /// ignores its value), the owner reshapes kind/value. Not a seed:
+    /// only stored on Save, and fresh installs open blank.
+    private static let template = NotifyRule(kind: NotifyRule.skipMyMessages)
 
     init() {
         let win = NSWindow(
@@ -122,7 +123,7 @@ final class RulesWindowController: NSWindowController {
             kindCombo.widthAnchor.constraint(equalToConstant: 150),
         ])
         valueField.delegate = self
-        valueField.placeholderString = "value (types CSV / chat substring)"
+        valueField.placeholderString = "(ignored)"
         valueField.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             valueField.widthAnchor.constraint(equalToConstant: 220),
@@ -132,7 +133,7 @@ final class RulesWindowController: NSWindowController {
         let editorRow = NSStackView(views: [
             NSTextField(labelWithString: "Kind:"),
             kindCombo,
-            NSTextField(labelWithString: "Value:"),
+            valueLabel,
             valueField,
             enabledCheck,
         ])
@@ -209,12 +210,27 @@ final class RulesWindowController: NSWindowController {
             kindCombo.stringValue = draft[r].kind
             valueField.stringValue = draft[r].value
             enabledCheck.state = draft[r].enabled ? .on : .off
-            hintLabel.stringValue = NotifyRule.hint(for: draft[r].kind.trimmingCharacters(in: .whitespaces))
+            refreshKindChrome(kind: draft[r].kind.trimmingCharacters(in: .whitespaces))
         } else {
             kindCombo.stringValue = ""
             valueField.stringValue = ""
             enabledCheck.state = .off
-            hintLabel.stringValue = ""
+            refreshKindChrome(kind: "")
+        }
+    }
+
+    /// Hint + value-field label/placeholder/enabled for a kind. The combo
+    /// offers the plain-language stock kinds; free text stays for custom
+    /// types.
+    private func refreshKindChrome(kind: String) {
+        hintLabel.stringValue = kind.isEmpty ? "" : NotifyRule.hint(for: kind)
+        valueLabel.stringValue = NotifyRule.valueLabel(for: kind)
+        valueField.placeholderString = NotifyRule.valuePlaceholder(for: kind)
+        if selectedRow >= 0 {
+            // Known kinds that ignore their value lock the field; custom
+            // kinds keep it (extensible payload).
+            let canonical = NotifyRule.canonicalKind(kind)
+            valueField.isEnabled = !NotifyRule.knownKinds.contains(canonical) || NotifyRule.usesValue(canonical)
         }
     }
 
@@ -224,12 +240,13 @@ final class RulesWindowController: NSWindowController {
     private func applyEditor(revertUI: Bool) {
         let r = selectedRow
         guard r >= 0 else { return }
-        let kind = kindCombo.stringValue.trimmingCharacters(in: .whitespaces)
+        // Canonicalize: a pasted pre-rename id becomes its replacement.
+        let kind = NotifyRule.canonicalKind(kindCombo.stringValue.trimmingCharacters(in: .whitespaces))
         let candidate = NotifyRule(
             kind: kind,
             value: valueField.stringValue.trimmingCharacters(in: .whitespaces),
             enabled: enabledCheck.state == .on)
-        hintLabel.stringValue = NotifyRule.hint(for: kind)
+        refreshKindChrome(kind: kind)
         if let problem = candidate.issue() {
             errorLabel.stringValue = problem
             if revertUI { loadEditorKeepingError() }

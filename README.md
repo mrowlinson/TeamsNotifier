@@ -68,6 +68,15 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
   Typing indicators, member-join activity, calls never notify.
 - `notifyOnEdit` (default false): also notify on MessageUpdate edits.
 - `skipOwnMessages` (default true).
+- Notify rules, edited in the GUI (menu `Edit rules…`: list, add,
+  remove, per-rule on/off, persisted to the config file): the extensible
+  store behind the filters above — `skip-my-own-messages`,
+  `only-these-message-types` (value e.g. `Text, RichText`),
+  `skip-edited-messages`, `noisy-chats-mention-only` (value = chat-name
+  text), `noisy-chats-channel-mentions`, `my-name-as-backup`.
+  Pre-rename ids (`skip-own`, `allow-types`, `skip-edits`, `loud-chat`)
+  still load (mapped on decode). Fresh installs keep a blank list
+  (everything notifies); unknown kinds round-trip unenforced.
 - Scheduled mute, edited in the GUI (menu `Edit schedule…`: list, add,
   edit, remove entries, per-entry on/off switch, persisted to the config
   file): `muteWindows: [{days:[2,3,4,5,6],start:"16:40",end:"24:00"},
@@ -89,7 +98,7 @@ Every notified message is appended to
 `~/Library/Application Support/TeamsNotifier/history.jsonl` (one JSON
 object per line: `timestamp`, `sender`, `chat`, `threadID`, `text`).
 Menu `Show history` opens it in the default viewer. Notified only:
-muted and filter-suppressed messages (loud-chat no-mention, own/type/
+muted and filter-suppressed messages (noisy-chat no-mention, own/type/
 edit skips) are never recorded. Retention: newest 10k entries + 30 days,
 pruned on launch and daily. NOTE: plaintext on disk (owner acknowledged)
 — anyone with file access can read past message text.

@@ -4,13 +4,15 @@
 ///   notifications bypass this filter entirely (posted directly).
 ///   The app sets `config.muted` per message to the effective value
 ///   (schedule + memory-only manual override) before calling decide.
-/// - Own messages: skipped (when skipOwnMessages).
+/// - Own messages: skipped (when skipOwnMessages). Sender match is MRI
+///   preferred with a display-name backup (when matchByDisplayName).
 /// - Non-text types (Control/Typing, ThreadActivity, ...): skipped unless
-///   listed in notifyTypes. A "*" entry (written when the allow-types
-///   rule is absent/disabled) allows every type.
+///   listed in notifyTypes. A "*" entry (written when the
+///   only-these-message-types rule is absent/disabled) allows every type.
 /// - Edits (MessageUpdate): skipped unless notifyOnEdit.
-/// - Chats whose display name contains loudSubstring (case-insensitive):
-///   notify ONLY on owner mention (MRI preferred, display-name fallback) or
+/// - Noisy chats (display name contains loudSubstring, case-insensitive):
+///   notify ONLY on owner mention (MRI preferred, display-name backup
+///   when matchByDisplayName) or — when noisyChannelMentions —
 ///   channel/Everyone mention.
 /// - All other chats: notify.
 public enum ChatFilter {
@@ -35,7 +37,7 @@ public enum ChatFilter {
             return .skip(reason: mutedReason)
         }
         // Own message?
-        if config.skipOwnMessages, isOwnMessage(message, ownerMRI: ownerMRI, ownerDisplayName: config.owner.displayName) {
+        if config.skipOwnMessages, isOwnMessage(message, ownerMRI: ownerMRI, ownerDisplayName: config.owner.displayName, matchByName: config.matchByDisplayName) {
             return .skip(reason: "own-message")
         }
         // Type gate on first messagetype segment (Text, RichText, Control, ...).
@@ -49,12 +51,12 @@ public enum ChatFilter {
         if isEdit, !config.notifyOnEdit {
             return .skip(reason: "edit")
         }
-        // Loud chat rule.
+        // Noisy-chat rule.
         if isLoudChat(chatDisplayName, substring: config.loudSubstring) {
-            if Mentions.mentionsOwner(message.mentions, ownerMRI: ownerMRI, ownerDisplayName: config.owner.displayName) {
+            if Mentions.mentionsOwner(message.mentions, ownerMRI: ownerMRI, ownerDisplayName: config.owner.displayName, matchByName: config.matchByDisplayName) {
                 return .notify(reason: "loud-owner-mention")
             }
-            if Mentions.mentionsChannelOrEveryone(message.mentions) {
+            if config.noisyChannelMentions, Mentions.mentionsChannelOrEveryone(message.mentions) {
                 return .notify(reason: "loud-channel-mention")
             }
             return .skip(reason: "loud-no-mention")
@@ -62,12 +64,14 @@ public enum ChatFilter {
         return .notify(reason: "chat-message")
     }
 
-    static func isOwnMessage(_ m: EventMessage.Message, ownerMRI: String?, ownerDisplayName: String) -> Bool {
+    static func isOwnMessage(_ m: EventMessage.Message, ownerMRI: String?, ownerDisplayName: String, matchByName: Bool = true) -> Bool {
         if let ownerMRI, !ownerMRI.isEmpty, let sender = m.senderMRI, !sender.isEmpty {
             return sender.caseInsensitiveCompare(ownerMRI) == .orderedSame
         }
-        // MRI unknown: fall back to sender display-name match. Empty names
-        // never match (avoid muting everything when unconfigured).
+        // MRI unknown: fall back to sender display-name match (unless the
+        // name-backup gate is off: IDs only). Empty names never match
+        // (avoid muting everything when unconfigured).
+        guard matchByName else { return false }
         let a = m.senderName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let b = ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return !a.isEmpty && a == b
