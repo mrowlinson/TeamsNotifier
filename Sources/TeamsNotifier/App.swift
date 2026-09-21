@@ -133,7 +133,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startup() async {
         let granted = await Notifier.shared.requestAuthorization()
-        if !granted {
+        let authStatus = await Notifier.shared.authorizationStatus()
+        Log.info("notification authorization: \(NotificationAuth.label(rawValue: authStatus.rawValue))")
+        if NotificationAuth.isBlocked(rawValue: authStatus.rawValue) {
+            setStatus("notifications blocked — enable in Settings")
+            Log.fault("notifications blocked; enable in System Settings > Notifications")
+        } else if !granted {
             Log.fault("notifications not granted; enable in System Settings > Notifications")
         }
         if flags.notifyTest {
@@ -343,7 +348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusMenuItem!)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Test notification", action: #selector(menuTest), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(menuQuit), keyEquivalent: "q"))
         for i in menu.items { i.target = self }
         item.menu = menu
