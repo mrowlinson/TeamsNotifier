@@ -249,13 +249,32 @@ public struct Config: Codable, Sendable {
     }
 
     /// Load from path; missing file yields a FRESH config with an empty
-    /// schedule (zero seeded entries) and BLANK rules. An existing file
-    /// whose JSON lacks the schedule/rules keys migrates them AND persists
-    /// them back to the store (best-effort: a failed write keeps the file
-    /// as it was while the in-memory values are still migrated).
-    public static func load(from path: String) throws -> Config {
+    /// schedule (zero seeded entries) and BLANK rules, UNLESS
+    /// `existingInstall` is true (the app passes Keychain sign-in
+    /// presence: an owner who never created a config file but is signed
+    /// in is an existing install, not a fresh one). Missing-file +
+    /// existing install migrates the owner schedule + stock owner rules
+    /// and persists them (same didMigrate* + save pattern as legacy
+    /// files). An existing file whose JSON lacks the schedule/rules keys
+    /// migrates them AND persists them back to the store (best-effort: a
+    /// failed write keeps the file as it was while the in-memory values
+    /// are still migrated).
+    public static func load(from path: String, existingInstall: Bool = false) throws -> Config {
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: url.path) else {
+            if existingInstall {
+                var migrated = Config.default
+                migrated.muteWindows = MuteWindow.ownerSchedule
+                migrated.didMigrateSchedule = true
+                migrated.notifyRules = NotifyRule.migrate(
+                    skipOwn: migrated.skipOwnMessages, notifyOnEdit: migrated.notifyOnEdit,
+                    types: migrated.notifyTypes, loud: migrated.loudSubstring)
+                migrated.rulesStored = false
+                migrated.didMigrateRules = true
+                migrated.applyRules()
+                try? migrated.save(to: path)
+                return migrated
+            }
             var fresh = Config.default
             fresh.muteWindows = []
             fresh.notifyRules = []
