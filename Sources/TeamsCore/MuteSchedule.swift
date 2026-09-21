@@ -17,10 +17,12 @@ public struct MuteWindow: Codable, Sendable, Equatable {
         self.end = end
     }
 
-    /// Default schedule: Mon-Fri 07:50-16:40, all day Sat/Sun.
+    /// Default schedule: muted Mon-Fri 00:00-07:50 + 16:40-24:00 and all
+    /// day Sat/Sun; unmuted Mon-Fri 07:50-16:40.
     public static var defaults: [MuteWindow] {
         [
-            MuteWindow(days: [2, 3, 4, 5, 6], start: "07:50", end: "16:40"),
+            MuteWindow(days: [2, 3, 4, 5, 6], start: "16:40", end: "24:00"),
+            MuteWindow(days: [2, 3, 4, 5, 6], start: "00:00", end: "07:50"),
             MuteWindow(days: [1, 7], start: "00:00", end: "24:00"),
         ]
     }
@@ -66,7 +68,7 @@ public enum MuteSchedule {
     public static let defaultTimeZoneID = "America/New_York"
 
     /// True when `date` falls inside any window. Boundaries: inclusive
-    /// start, exclusive end (07:50 is muted, 16:40 is not).
+    /// start, exclusive end (16:40 is muted, 07:50 is not).
     public static func scheduledMuted(
         at date: Date, windows: [MuteWindow], timeZone: TimeZone
     ) -> Bool {

@@ -35,7 +35,8 @@ public struct Config: Codable, Sendable {
     /// stored value no longer means anything. Kept so old configs still
     /// decode/round-trip.
     public var muted: Bool
-    /// Weekly mute schedule. Default: Mon-Fri 07:50-16:40 + all day Sat/Sun.
+    /// Weekly mute schedule. Default: muted Mon-Fri 00:00-07:50 +
+    /// 16:40-24:00 + all day Sat/Sun (unmuted Mon-Fri 07:50-16:40).
     /// Empty list disables scheduled mute (never muted by schedule).
     public var muteWindows: [MuteWindow]
     /// IANA time zone the schedule runs in. Default "America/New_York".

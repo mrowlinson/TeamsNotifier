@@ -47,34 +47,34 @@ struct MuteScheduleTests {
 
     // MARK: resolver matrix
 
-    @Test func weekdayInsideWindowMuted() {
-        #expect(Self.muted("2026-09-21 08:00") == true) // Mon
-        #expect(Self.muted("2026-09-22 12:00") == true) // Tue
-        #expect(Self.muted("2026-09-23 15:00") == true) // Wed
-        #expect(Self.muted("2026-09-24 09:30") == true) // Thu
-        #expect(Self.muted("2026-09-25 12:00") == true) // Fri
+    @Test func weekdayDaytimeUnmuted() {
+        #expect(Self.muted("2026-09-21 08:00") == false) // Mon
+        #expect(Self.muted("2026-09-22 12:00") == false) // Tue
+        #expect(Self.muted("2026-09-23 15:00") == false) // Wed
+        #expect(Self.muted("2026-09-24 09:30") == false) // Thu
+        #expect(Self.muted("2026-09-25 12:00") == false) // Fri
     }
 
-    @Test func weekdayOutsideWindowUnmuted() {
-        #expect(Self.muted("2026-09-21 00:00") == false)
-        #expect(Self.muted("2026-09-21 07:00") == false)
-        #expect(Self.muted("2026-09-21 17:00") == false)
-        #expect(Self.muted("2026-09-21 23:59") == false)
-        #expect(Self.muted("2026-09-25 17:00") == false)
-        #expect(Self.muted("2026-09-25 23:59") == false)
+    @Test func weekdayOvernightMuted() {
+        #expect(Self.muted("2026-09-21 00:00") == true)
+        #expect(Self.muted("2026-09-21 07:00") == true)
+        #expect(Self.muted("2026-09-21 17:00") == true)
+        #expect(Self.muted("2026-09-21 23:59") == true)
+        #expect(Self.muted("2026-09-25 17:00") == true)
+        #expect(Self.muted("2026-09-25 23:59") == true)
     }
 
     @Test func exactBoundaries() {
         // Inclusive start, exclusive end.
-        #expect(Self.muted("2026-09-21 07:49") == false)
-        #expect(Self.muted("2026-09-21 07:50") == true)
-        #expect(Self.muted("2026-09-21 16:39") == true)
-        #expect(Self.muted("2026-09-21 16:40") == false)
+        #expect(Self.muted("2026-09-21 07:49") == true)
+        #expect(Self.muted("2026-09-21 07:50") == false)
+        #expect(Self.muted("2026-09-21 16:39") == false)
+        #expect(Self.muted("2026-09-21 16:40") == true)
         // Seconds inside the boundary minutes follow the minute rule.
-        #expect(Self.muted("2026-09-21 07:49:59") == false)
-        #expect(Self.muted("2026-09-21 07:50:00") == true)
-        #expect(Self.muted("2026-09-21 16:39:59") == true)
-        #expect(Self.muted("2026-09-21 16:40:01") == false)
+        #expect(Self.muted("2026-09-21 07:49:59") == true)
+        #expect(Self.muted("2026-09-21 07:50:00") == false)
+        #expect(Self.muted("2026-09-21 16:39:59") == false)
+        #expect(Self.muted("2026-09-21 16:40:01") == true)
     }
 
     @Test func weekendAllDay() {
@@ -84,9 +84,9 @@ struct MuteScheduleTests {
         #expect(Self.muted("2026-09-27 00:00") == true) // Sun
         #expect(Self.muted("2026-09-27 12:00") == true)
         #expect(Self.muted("2026-09-27 23:59") == true)
-        // Edges: Fri night and Mon midnight are outside the schedule.
-        #expect(Self.muted("2026-09-25 23:59") == false)
-        #expect(Self.muted("2026-09-28 00:00") == false) // Mon
+        // Edges: Fri night and Mon midnight are inside the mute windows.
+        #expect(Self.muted("2026-09-25 23:59") == true)
+        #expect(Self.muted("2026-09-28 00:00") == true) // Mon
     }
 
     @Test func emptyWindowsNeverMuted() {
@@ -106,8 +106,8 @@ struct MuteScheduleTests {
     @Test func injectedTimeZoneHonored() {
         // Same wall clock in a fixed zone follows the same schedule, proving
         // the zone parameter (not the machine zone) drives the resolver.
-        #expect(Self.muted("2026-09-21 08:00", tz: Self.plus5) == true)
-        #expect(Self.muted("2026-09-21 17:00", tz: Self.plus5) == false)
+        #expect(Self.muted("2026-09-21 08:00", tz: Self.plus5) == false)
+        #expect(Self.muted("2026-09-21 17:00", tz: Self.plus5) == true)
         #expect(Self.muted("2026-09-26 12:00", tz: Self.plus5) == true)
         #expect(Self.next("2026-09-21 08:00", tz: Self.plus5) == Self.at("2026-09-21 16:40", tz: Self.plus5))
     }
@@ -115,10 +115,10 @@ struct MuteScheduleTests {
     @Test func dstMondaysBehave() {
         // 2026 DST starts Mar 8 (EDT) and ends Nov 1 (EST); both anchor
         // Mondays keep wall-clock windows under the identifier zone.
-        #expect(Self.muted("2026-03-09 08:00") == true)
-        #expect(Self.muted("2026-03-09 17:00") == false)
-        #expect(Self.muted("2026-11-02 08:00") == true)
-        #expect(Self.muted("2026-11-02 17:00") == false)
+        #expect(Self.muted("2026-03-09 08:00") == false)
+        #expect(Self.muted("2026-03-09 17:00") == true)
+        #expect(Self.muted("2026-11-02 08:00") == false)
+        #expect(Self.muted("2026-11-02 17:00") == true)
         #expect(Self.next("2026-03-09 08:00") == Self.at("2026-03-09 16:40"))
         #expect(Self.next("2026-11-02 08:00") == Self.at("2026-11-02 16:40"))
     }
@@ -126,14 +126,14 @@ struct MuteScheduleTests {
     // MARK: nextTransition
 
     @Test func nextTransitionMath() {
-        #expect(Self.next("2026-09-21 08:00") == Self.at("2026-09-21 16:40")) // Mon in -> end
-        #expect(Self.next("2026-09-21 17:00") == Self.at("2026-09-22 07:50")) // Mon out -> Tue start
-        #expect(Self.next("2026-09-21 07:00") == Self.at("2026-09-21 07:50")) // Mon early -> start
-        #expect(Self.next("2026-09-25 17:00") == Self.at("2026-09-26 00:00")) // Fri eve -> Sat start
-        #expect(Self.next("2026-09-26 00:00") == Self.at("2026-09-28 00:00")) // Sat start -> Mon 00:00
-        #expect(Self.next("2026-09-27 12:00") == Self.at("2026-09-28 00:00")) // Sun -> Mon 00:00
-        #expect(Self.next("2026-09-27 23:59") == Self.at("2026-09-28 00:00")) // Sun eve -> Mon 00:00
-        #expect(Self.next("2026-09-28 00:00") == Self.at("2026-09-28 07:50")) // Mon 00:00 -> Mon start
+        #expect(Self.next("2026-09-21 08:00") == Self.at("2026-09-21 16:40")) // Mon day -> mute at 16:40
+        #expect(Self.next("2026-09-21 17:00") == Self.at("2026-09-22 07:50")) // Mon eve -> Tue unmute (midnight no-flip skipped)
+        #expect(Self.next("2026-09-21 07:00") == Self.at("2026-09-21 07:50")) // Mon early -> unmute
+        #expect(Self.next("2026-09-25 17:00") == Self.at("2026-09-28 07:50")) // Fri eve -> Mon unmute (weekend muted)
+        #expect(Self.next("2026-09-26 00:00") == Self.at("2026-09-28 07:50")) // Sat start -> Mon unmute
+        #expect(Self.next("2026-09-27 12:00") == Self.at("2026-09-28 07:50")) // Sun -> Mon unmute
+        #expect(Self.next("2026-09-27 23:59") == Self.at("2026-09-28 07:50")) // Sun eve -> Mon unmute
+        #expect(Self.next("2026-09-28 00:00") == Self.at("2026-09-28 07:50")) // Mon 00:00 -> Mon unmute
     }
 
     @Test func nextTransitionAtExactBoundary() {
@@ -155,15 +155,15 @@ struct MuteScheduleTests {
     // MARK: overrides
 
     @Test func overrideHoldsUntilBoundary() {
-        // Manual unmute during a window holds, then the schedule resumes.
+        // Manual mute during the unmuted daytime holds, then the schedule resumes.
         var s = MuteState()
         let setAt = Self.at("2026-09-21 08:00")
         let sched = MuteSchedule.scheduledMuted(at: setAt, windows: Self.windows, timeZone: Self.et)
-        #expect(sched == true)
+        #expect(sched == false)
         let boundary = MuteSchedule.nextTransition(after: setAt, windows: Self.windows, timeZone: Self.et)!
-        s.setOverride(false, scheduledNow: sched, nextBoundary: boundary)
-        #expect(s.effective(scheduled: true) == false)
-        // Mid-window refresh: holds.
+        s.setOverride(true, scheduledNow: sched, nextBoundary: boundary)
+        #expect(s.effective(scheduled: false) == true)
+        // Mid-day refresh: holds.
         let mid = Self.at("2026-09-21 12:00")
         let midSched = MuteSchedule.scheduledMuted(at: mid, windows: Self.windows, timeZone: Self.et)
         #expect(s.refresh(now: mid, scheduledNow: midSched) == false)
@@ -173,49 +173,49 @@ struct MuteScheduleTests {
         let endSched = MuteSchedule.scheduledMuted(at: end, windows: Self.windows, timeZone: Self.et)
         #expect(s.refresh(now: end, scheduledNow: endSched) == true)
         #expect(s.hasOverride == false)
-        #expect(s.effective(scheduled: endSched) == false)
+        #expect(s.effective(scheduled: endSched) == true)
     }
 
-    @Test func overrideMutedHoldsUntilNextWindow() {
-        // Manual mute outside a window holds until the next window starts.
+    @Test func overrideUnmutedHoldsUntilNextBoundary() {
+        // Manual unmute during a mute window holds until the window ends.
         var s = MuteState()
         let setAt = Self.at("2026-09-21 17:00")
         let sched = MuteSchedule.scheduledMuted(at: setAt, windows: Self.windows, timeZone: Self.et)
-        #expect(sched == false)
+        #expect(sched == true)
         let boundary = MuteSchedule.nextTransition(after: setAt, windows: Self.windows, timeZone: Self.et)!
-        s.setOverride(true, scheduledNow: sched, nextBoundary: boundary)
+        s.setOverride(false, scheduledNow: sched, nextBoundary: boundary)
         let eve = Self.at("2026-09-21 20:00")
-        #expect(s.refresh(now: eve, scheduledNow: false) == false)
-        #expect(s.effective(scheduled: false) == true)
+        #expect(s.refresh(now: eve, scheduledNow: true) == false)
+        #expect(s.effective(scheduled: true) == false)
         let start = Self.at("2026-09-22 07:50")
-        #expect(s.refresh(now: start, scheduledNow: true) == true)
-        #expect(s.effective(scheduled: true) == true)
-    }
-
-    @Test func manualReMuteSetsNewOverride() {
-        // Unmuted by hand, then re-muted by hand: the new override governs
-        // until the boundary, then the schedule resumes (unmuted).
-        var s = MuteState()
-        let setAt = Self.at("2026-09-21 08:00")
-        let boundary = MuteSchedule.nextTransition(after: setAt, windows: Self.windows, timeZone: Self.et)!
-        s.setOverride(false, scheduledNow: true, nextBoundary: boundary)
-        s.setOverride(true, scheduledNow: true, nextBoundary: boundary)
-        #expect(s.effective(scheduled: true) == true)
-        let end = Self.at("2026-09-21 16:40")
-        #expect(s.refresh(now: end, scheduledNow: false) == true)
+        #expect(s.refresh(now: start, scheduledNow: false) == true)
         #expect(s.effective(scheduled: false) == false)
     }
 
+    @Test func manualReMuteSetsNewOverride() {
+        // Muted by hand, then unmuted by hand: the new override governs
+        // until the boundary, then the schedule resumes (muted).
+        var s = MuteState()
+        let setAt = Self.at("2026-09-21 08:00")
+        let boundary = MuteSchedule.nextTransition(after: setAt, windows: Self.windows, timeZone: Self.et)!
+        s.setOverride(true, scheduledNow: false, nextBoundary: boundary)
+        s.setOverride(false, scheduledNow: false, nextBoundary: boundary)
+        #expect(s.effective(scheduled: false) == false)
+        let end = Self.at("2026-09-21 16:40")
+        #expect(s.refresh(now: end, scheduledNow: true) == true)
+        #expect(s.effective(scheduled: true) == true)
+    }
+
     @Test func overrideExpiresAcrossWholeWindow() {
-        // A whole window passing unseen (sleep) still clears the override via
-        // the recorded boundary, even though the schedule value matches again.
+        // A whole boundary passing unseen (sleep) still clears the override
+        // via the recorded boundary, even though the schedule value matches again.
         var s = MuteState()
         let setAt = Self.at("2026-09-21 08:00")
         let boundary = MuteSchedule.nextTransition(after: setAt, windows: Self.windows, timeZone: Self.et)!
         #expect(boundary == Self.at("2026-09-21 16:40"))
-        s.setOverride(false, scheduledNow: true, nextBoundary: boundary)
-        let nextWeek = Self.at("2026-09-28 08:00") // Mon again, muted again
-        #expect(s.refresh(now: nextWeek, scheduledNow: true) == true)
+        s.setOverride(true, scheduledNow: false, nextBoundary: boundary)
+        let nextWeek = Self.at("2026-09-28 08:00") // Mon again, unmuted again
+        #expect(s.refresh(now: nextWeek, scheduledNow: false) == true)
         #expect(s.hasOverride == false)
     }
 
@@ -278,6 +278,9 @@ struct MuteScheduleTests {
     @Test func configDefaultsSchedule() {
         #expect(Config.default.muteWindows == MuteWindow.defaults)
         #expect(Config.default.scheduleTZ == "America/New_York")
+        #expect(MuteWindow.defaults.count == 3)
+        let allValid = MuteWindow.defaults.allSatisfy { $0.isValid }
+        #expect(allValid)
     }
 
     @Test func legacyConfigDecodesScheduleDefaultsQuietly() throws {
