@@ -9,6 +9,13 @@ import TeamsCore
 /// Menu-bar-only character kept: on-demand window, Cmd-W closes to
 /// nothing, no dock change.
 ///
+/// Guided for new users: an intro line teaches what rules are, a blank
+/// state explains that blank = notify everything, Add picks by GOAL in
+/// plain words (each choice shows what it does + an example), rows read
+/// as sentences, and the editor shows a full description + example per
+/// kind with plain-words validation. Display only: persistence,
+/// migration, decode, and filter behavior are untouched.
+///
 /// The kind field is free text with the stock kinds' display names
 /// offered for completion (ids store underneath), so NEW rule types
 /// are addable (not a fixed set). Unknown kinds store and round-trip;
@@ -43,6 +50,10 @@ final class RulesWindowController: NSWindowController {
     private let valueLabel = NSTextField(labelWithString: "Value:")
     private let valueField = NSTextField()
     private let enabledCheck = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
+    private let introLabel = NSTextField(labelWithString: "")
+    private let blankLabel = NSTextField(labelWithString: "")
+    private let addDescLabel = NSTextField(labelWithString: "")
+    private let descLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
     private let errorLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
@@ -50,17 +61,20 @@ final class RulesWindowController: NSWindowController {
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
 
     private enum Col: String, CaseIterable {
-        case on, kind, value
+        case on, rule
     }
 
-    /// Template for the Add button: always valid (skip-my-own-messages
-    /// ignores its value), the owner reshapes kind/value. Not a seed:
-    /// only stored on Save, and fresh installs open blank.
-    private static let template = NotifyRule(kind: NotifyRule.skipMyMessages)
+    /// Default Add-row hint (also restored when the goal menu closes).
+    private static let addHint = "Add: pick a goal and the rule builds itself (value prefilled where needed)."
+
+    /// Starter for the goal menu's Custom row: valid (unknown kinds
+    /// always validate), renamed in the Kind combo by the owner.
+    /// Not a seed: only stored on Save, fresh installs open blank.
+    private static let customStarter = NotifyRule(kind: "my-custom-rule")
 
     /// Width of the longest kind display name in the system font, plus
-    /// `extra` for control chrome. Sizes the combo and Kind column so
-    /// full names show without clipping.
+    /// `extra` for control chrome. Sizes the Kind combo so full names
+    /// show without clipping.
     private static func kindDisplayWidth(extra: CGFloat) -> CGFloat {
         let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let widest = NotifyRule.knownDisplayNames
@@ -71,7 +85,7 @@ final class RulesWindowController: NSWindowController {
 
     init() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 580),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered, defer: false)
         win.title = "Notify rules"
@@ -97,11 +111,10 @@ final class RulesWindowController: NSWindowController {
             let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(col.rawValue))
             switch col {
             case .on: c.title = "On"; c.width = 36
-            case .kind: c.title = "Kind"; c.width = max(130, Self.kindDisplayWidth(extra: 12))
-            case .value: c.title = "Value"; c.width = 200
+            case .rule: c.title = "Rule"; c.width = 440
             }
             c.resizingMask = [.userResizingMask]
-            if col == .value { c.resizingMask.insert(.autoresizingMask) }
+            if col == .rule { c.resizingMask.insert(.autoresizingMask) }
             tableView.addTableColumn(c)
         }
         tableView.delegate = self
@@ -152,8 +165,19 @@ final class RulesWindowController: NSWindowController {
         editorRow.orientation = .horizontal
         editorRow.spacing = 6
 
+        introLabel.stringValue = "Rules decide what notifies you: each rule quiets something, or narrows what gets through."
+        blankLabel.stringValue = NotifyRule.blankStateText
+        addDescLabel.stringValue = Self.addHint
+        for lab in [introLabel, blankLabel, addDescLabel, descLabel] {
+            lab.textColor = .secondaryLabelColor
+            lab.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+            lab.lineBreakMode = .byWordWrapping
+            lab.usesSingleLineMode = false
+        }
         hintLabel.textColor = .secondaryLabelColor
         hintLabel.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        hintLabel.lineBreakMode = .byWordWrapping
+        hintLabel.usesSingleLineMode = false
         errorLabel.textColor = .systemRed
         errorLabel.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         statusLabel.textColor = .secondaryLabelColor
@@ -170,7 +194,8 @@ final class RulesWindowController: NSWindowController {
         bottomRow.spacing = 8
 
         let stack = NSStackView(views: [
-            tableScroll, rowButtons, editorRow, hintLabel, errorLabel, bottomRow,
+            introLabel, tableScroll, blankLabel, rowButtons, addDescLabel,
+            editorRow, descLabel, hintLabel, errorLabel, bottomRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -185,6 +210,16 @@ final class RulesWindowController: NSWindowController {
             stack.bottomAnchor.constraint(equalTo: g.bottomAnchor),
             tableScroll.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             tableScroll.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            introLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            introLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            blankLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            blankLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            addDescLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            addDescLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            descLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            descLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            hintLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            hintLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             bottomRow.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             bottomRow.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
         ])
@@ -231,9 +266,15 @@ final class RulesWindowController: NSWindowController {
         }
     }
 
-    /// Hint + value-field label/placeholder/enabled for a kind id. The
-    /// combo shows display names; free text stays for custom types.
+    /// Description + hint + value-field label/placeholder/enabled for
+    /// a kind id. The combo shows display names; free text stays for
+    /// custom types.
     private func refreshKindChrome(kind: String) {
+        if kind.isEmpty {
+            descLabel.stringValue = ""
+        } else {
+            descLabel.stringValue = Self.describe(kind: kind)
+        }
         hintLabel.stringValue = kind.isEmpty ? "" : NotifyRule.hint(for: kind)
         valueLabel.stringValue = NotifyRule.valueLabel(for: kind)
         valueField.placeholderString = NotifyRule.valuePlaceholder(for: kind)
@@ -259,7 +300,9 @@ final class RulesWindowController: NSWindowController {
             value: valueField.stringValue.trimmingCharacters(in: .whitespaces),
             enabled: enabledCheck.state == .on)
         refreshKindChrome(kind: kind)
-        if let problem = candidate.issue() {
+        // Plain-words validation (same validity as issue(); the stored
+        // warnings keep issue() untouched).
+        if let problem = candidate.plainIssue() {
             errorLabel.stringValue = problem
             if revertUI { loadEditorKeepingError() }
             return
@@ -278,7 +321,15 @@ final class RulesWindowController: NSWindowController {
         errorLabel.stringValue = kept
     }
 
+    /// Full-sentence WHAT IT DOES + concrete example for a kind id
+    /// (example hidden when the kind ignores its value).
+    private static func describe(kind: String) -> String {
+        let ex = NotifyRule.exampleText(for: kind)
+        return ex.isEmpty ? NotifyRule.explanation(for: kind) : NotifyRule.explanation(for: kind) + " " + ex
+    }
+
     private func updateStatus() {
+        blankLabel.isHidden = !draft.isEmpty
         let on = draft.filter(\.enabled).count
         if draft.isEmpty {
             statusLabel.stringValue = "No rules: every message notifies."
@@ -289,9 +340,36 @@ final class RulesWindowController: NSWindowController {
         }
     }
 
+    /// Add by GOAL: popup menu of plain-words goals (highlighting one
+    /// shows what it does + an example below); each pick appends a
+    /// valid rule with its starter value. Custom row for free-text
+    /// kinds (renamed in the Kind combo).
     @objc private func addEntry() {
         errorLabel.stringValue = ""
-        draft.append(Self.template)
+        let menu = NSMenu()
+        menu.delegate = self
+        for o in NotifyRule.goalOptions {
+            let item = NSMenuItem(title: o.goal, action: #selector(goalPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = o.kind
+            item.toolTip = o.example.isEmpty ? o.does : o.does + " " + o.example
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let custom = NSMenuItem(title: "Custom rule of my own…", action: #selector(goalPicked(_:)), keyEquivalent: "")
+        custom.target = self
+        custom.representedObject = ""
+        custom.toolTip = Self.describe(kind: Self.customStarter.kind)
+        menu.addItem(custom)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: addButton.bounds.height + 4), in: addButton)
+    }
+
+    @objc private func goalPicked(_ sender: NSMenuItem) {
+        let picked = sender.representedObject as? String ?? ""
+        let rule = picked.isEmpty
+            ? Self.customStarter
+            : NotifyRule(kind: picked, value: NotifyRule.defaultValue(for: picked))
+        draft.append(rule)
         tableView.reloadData()
         tableView.selectRowIndexes(IndexSet(integer: draft.count - 1), byExtendingSelection: false)
         loadEditor()
@@ -388,8 +466,9 @@ extension RulesWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 return c
             }()
             switch tableColumn?.identifier.rawValue {
-            case Col.kind.rawValue: cell.textField?.stringValue = NotifyRule.displayName(for: rule.kind)
-            case Col.value.rawValue: cell.textField?.stringValue = rule.value.isEmpty ? "—" : rule.value
+            case Col.rule.rawValue:
+                cell.textField?.stringValue = NotifyRule.sentence(for: rule)
+                cell.textField?.textColor = rule.enabled ? .labelColor : .secondaryLabelColor
             default: break
             }
             return cell
@@ -420,5 +499,25 @@ extension RulesWindowController: NSTextFieldDelegate, NSComboBoxDelegate {
 extension RulesWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         onSave = nil // closes to nothing; next show() reconfigures
+    }
+}
+
+// MARK: - goal menu highlight
+
+extension RulesWindowController: NSMenuDelegate {
+    /// Highlighting a goal shows its WHAT IT DOES + example in the
+    /// Add hint line, so each choice explains itself before the pick.
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        guard let kind = item?.representedObject as? String else {
+            addDescLabel.stringValue = Self.addHint
+            return
+        }
+        addDescLabel.stringValue = kind.isEmpty
+            ? Self.describe(kind: Self.customStarter.kind)
+            : Self.describe(kind: kind)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        addDescLabel.stringValue = Self.addHint
     }
 }
