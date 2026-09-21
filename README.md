@@ -11,7 +11,7 @@ unreliable; this is a 652KB single binary idling at ~12MB footprint.
 ## Status
 
 Parsers, filter, framing, auth plumbing, device-code flow, and
-notifications are built and unit-tested (83 tests green). Live auth +
+notifications are built and unit-tested (190 tests green). Live auth +
 realtime against the owner's
 work tenant is **not yet validated** — owner runs Setup below and reports
 back. Internal Teams APIs can drift; failures are loud (see Limits).
@@ -76,6 +76,17 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
   the next schedule boundary, then the schedule resumes; toggles are
   memory-only (fresh launches follow the schedule). Menu status shows the
   reason (`Muted · schedule`, `Unmuted · manual until 4:40 PM ET`, ...).
+
+## History
+
+Every notified message is appended to
+`~/Library/Application Support/TeamsNotifier/history.jsonl` (one JSON
+object per line: `timestamp`, `sender`, `chat`, `threadID`, `text`).
+Menu `Show history` opens it in the default viewer. Notified only:
+muted and filter-suppressed messages (loud-chat no-mention, own/type/
+edit skips) are never recorded. Retention: newest 10k entries + 30 days,
+pruned on launch and daily. NOTE: plaintext on disk (owner acknowledged)
+— anyone with file access can read past message text.
 
 ## How it works
 
