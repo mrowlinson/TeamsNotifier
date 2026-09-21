@@ -93,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastTrouterState = "starting"
     private var flags = Flags()
     private var config = Config.default
+    private var muteState = MuteState()
+    private var scheduleTimeZone: TimeZone = TimeZone(identifier: MuteSchedule.defaultTimeZoneID) ?? TimeZone.current
+    private var muteTimer: Timer?
     private var auth = AuthManager()
     private var api: TeamsAPI?
     private var trouter: TrouterClient?
@@ -124,6 +127,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.fault("config load failed (\(flags.configPath)): \(error), using defaults")
             config = .default
         }
+        for w in config.normalizeSchedule() { Log.fault(w) }
+        if let tz = TimeZone(identifier: config.scheduleTZ) {
+            scheduleTimeZone = tz
+        } else {
+            scheduleTimeZone = TimeZone.current
+        }
         if let v = flags.ownerName { config.owner.displayName = v }
         if let v = flags.ownerUPN { config.owner.upn = v }
         if let v = flags.ownerMRI { config.owner.mri = v }
@@ -131,6 +140,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Notifier.shared.setup()
         setupMenu(status: "starting…")
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(muteDidWake),
+            name: NSWorkspace.didWakeNotification, object: nil)
+        scheduleMuteTimer(now: Date())
 
         Task {
             await startup()
@@ -227,7 +240,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Live self.config (not a startup snapshot): the Mute toggle must
     /// take effect without relaunch. System notifications bypass this path.
     private func handleMessage(_ m: EventMessage.Message, isEdit: Bool, api: TeamsAPI) async {
-        let config = self.config
+        let now = Date()
+        let sched = scheduledMuted(at: now)
+        _ = muteState.refresh(now: now, scheduledNow: sched)
+        var config = self.config
+        config.muted = muteState.effective(scheduled: sched)
         let ownerMRI = await auth.ownerMRI(configured: config.owner.mri)
         let chatName = await api.chatDisplayName(chatID: m.chatID, threadTopic: m.threadTopic)
         let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config)
@@ -377,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusMenuItem!)
         menu.addItem(.separator())
         let mute = NSMenuItem(title: "Mute", action: #selector(menuMute), keyEquivalent: "")
-        mute.state = config.muted ? .on : .off
+        mute.state = muteState.effective(scheduled: scheduledMuted(at: Date())) ? .on : .off
         menu.addItem(mute)
         muteMenuItem = mute
         menu.addItem(NSMenuItem(title: "Sign in", action: #selector(menuSignIn), keyEquivalent: ""))
@@ -440,7 +457,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func renderedStatus() -> String {
         var s = StatusLine.build(base: baseStatus, notifyRawValue: notifyRawValue)
         if notifyOff { s += NotifySettings.offSuffix }
+        s += " · " + muteReasonNow()
         return s
+    }
+
+    // MARK: Scheduled mute
+
+    private func scheduledMuted(at now: Date) -> Bool {
+        MuteSchedule.scheduledMuted(at: now, windows: config.muteWindows, timeZone: scheduleTimeZone)
+    }
+
+    /// Non-mutating status segment (override refresh happens in
+    /// refreshMuteUI / handleMessage, never in a render path).
+    private func muteReasonNow() -> String {
+        let now = Date()
+        let sched = scheduledMuted(at: now)
+        let next = MuteSchedule.nextTransition(after: now, windows: config.muteWindows, timeZone: scheduleTimeZone)
+        return MuteSchedule.reason(
+            effectiveMuted: muteState.effective(scheduled: sched),
+            hasOverride: muteState.hasOverride,
+            nextTransition: next, timeZone: scheduleTimeZone)
+    }
+
+    /// Drop expired overrides, sync checkmark + status, re-arm the boundary
+    /// timer. Called on: toggle, timer fire, menu open, wake, config load.
+    private func refreshMuteUI(now: Date) {
+        let sched = scheduledMuted(at: now)
+        let before = muteState.effective(scheduled: sched)
+        if muteState.refresh(now: now, scheduledNow: sched) {
+            Log.info("manual mute override expired at schedule boundary")
+        }
+        let after = muteState.effective(scheduled: sched)
+        if before != after {
+            Log.info(after ? "muted (schedule)" : "unmuted (schedule)")
+        }
+        muteMenuItem?.state = after ? .on : .off
+        renderStatus()
+        scheduleMuteTimer(now: now)
+    }
+
+    private func scheduleMuteTimer(now: Date) {
+        muteTimer?.invalidate()
+        muteTimer = nil
+        guard let next = MuteSchedule.nextTransition(after: now, windows: config.muteWindows, timeZone: scheduleTimeZone) else {
+            return // schedule never transitions (e.g. empty windows)
+        }
+        let t = Timer(fireAt: next, interval: 0, target: self, selector: #selector(muteTimerFired), userInfo: nil, repeats: false)
+        t.tolerance = 30
+        RunLoop.main.add(t, forMode: .common)
+        muteTimer = t
+    }
+
+    @objc private func muteTimerFired() {
+        refreshMuteUI(now: Date())
+    }
+
+    @objc private func muteDidWake() {
+        Log.debug("wake from sleep, re-resolving mute state")
+        refreshMuteUI(now: Date())
     }
 
     private func renderStatus() {
@@ -461,15 +535,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus(base)
     }
 
+    /// Manual toggle flips the EFFECTIVE state and records a memory-only
+    /// override, which holds until the next schedule boundary (or re-toggle).
+    /// Nothing is persisted: fresh launches are governed by the schedule.
     @objc private func menuMute() {
-        config.muted.toggle()
-        muteMenuItem?.state = config.muted ? .on : .off
-        do {
-            try config.save(to: flags.configPath)
-        } catch {
-            Log.fault("mute persist failed: \(error)")
-        }
-        Log.info(config.muted ? "muted" : "unmuted")
+        let now = Date()
+        let sched = scheduledMuted(at: now)
+        _ = muteState.refresh(now: now, scheduledNow: sched)
+        let effective = muteState.effective(scheduled: sched)
+        let next = MuteSchedule.nextTransition(after: now, windows: config.muteWindows, timeZone: scheduleTimeZone)
+        muteState.setOverride(!effective, scheduledNow: sched, nextBoundary: next)
+        Log.info(!effective ? "muted (manual)" : "unmuted (manual)")
+        refreshMuteUI(now: now)
     }
 
     @objc private func menuSignIn() {
@@ -512,8 +589,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     /// Opening the menu counts as seeing notifications: clear unread dot.
+    /// Also re-resolves mute state (boundary may have passed).
     func menuWillOpen(_ menu: NSMenu) {
         hasUnread = false
         updateIcon()
+        refreshMuteUI(now: Date())
     }
 }

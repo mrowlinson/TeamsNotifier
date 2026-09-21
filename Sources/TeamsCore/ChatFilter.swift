@@ -2,6 +2,8 @@
 ///
 /// - Muted: everything skipped (reason "muted"). System/sign-in-needed
 ///   notifications bypass this filter entirely (posted directly).
+///   The app sets `config.muted` per message to the effective value
+///   (schedule + memory-only manual override) before calling decide.
 /// - Own messages: skipped (when skipOwnMessages).
 /// - Non-text types (Control/Typing, ThreadActivity, ...): skipped unless
 ///   listed in notifyTypes.
