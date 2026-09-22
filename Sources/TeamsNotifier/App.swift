@@ -12,6 +12,7 @@ struct Flags {
     var loudSubstring: String?
     var verbose = false
     var notifyTest = false
+    var chatDemo = false
     var signIn = false
     var signOut = false
     var offline = false
@@ -30,6 +31,7 @@ struct Flags {
             case "--loud": i += 1; if i < args.count { f.loudSubstring = args[i] }
             case "--verbose", "-v": f.verbose = true
             case "--notify-test": f.notifyTest = true
+            case "--chat-demo": f.chatDemo = true
             case "--sign-in": f.signIn = true
             case "--sign-out": f.signOut = true
             case "--offline": f.offline = true
@@ -59,6 +61,7 @@ struct Flags {
       --loud SUBSTR   loud-chat substring (default: empty = rule off)
       --verbose, -v   debug logging (stderr + log file)
       --notify-test   post a test notification and keep running
+      --chat-demo     open a demo chat window on launch (offline ok)
       --sign-in       force interactive sign-in on launch
       --sign-out      clear Keychain tokens and exit
       --offline       menu bar only, no auth or connection (smoke test)
@@ -179,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if flags.notifyTest {
             Notifier.shared.post(title: "Test sender in Test chat", body: "Hello from TeamsNotifier. Click copies this text.")
         }
+        if flags.chatDemo {
+            await MainActor.run { ChatWindowController.showDemo() }
+        }
 
         await auth.setNeedsSignInHandler { [weak self] reason in
             Task { await self?.handleNeedsSignIn(reason: reason) }
@@ -213,6 +219,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return .success(())
             } catch {
                 return .failure(error)
+            }
+        }
+        // Open-chat action: show (or focus) the per-chat window. Every
+        // message notification carries the thread id, so a closed window
+        // reopens from the next notification for that chat.
+        Notifier.shared.onOpenChat = { chatID in
+            let name = await apiRef.chatDisplayName(chatID: chatID, threadTopic: nil)
+            await MainActor.run {
+                ChatWindowController.show(chatID: chatID, title: name, api: apiRef)
             }
         }
         trouter = TrouterClient(
@@ -260,6 +275,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config.muted = muteState.effective(scheduled: sched)
         let ownerMRI = await auth.ownerMRI(configured: config.owner.mri)
         let chatName = await api.chatDisplayName(chatID: m.chatID, threadTopic: m.threadTopic)
+        // Live fan-out to the open per-chat window (if any). Ahead of the
+        // filter: the window shows the full conversation (muted, own, and
+        // notify-suppressed alike); text-bearing messages only.
+        let liveText = m.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ChatWindowHistory.isTextMessage(type: m.messageType), !liveText.isEmpty {
+            ChatWindowController.deliver(
+                chatID: m.chatID,
+                message: ChatMessage(
+                    id: m.messageID, sender: m.senderName, text: liveText,
+                    date: m.composeTime.flatMap(ChatWindowHistory.parseDate),
+                    rawTime: m.composeTime),
+                isEdit: isEdit)
+        }
         let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config)
         switch decision {
         case .skip(let reason):
@@ -419,6 +447,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Send test notification", action: #selector(menuTest), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show log", action: #selector(menuShowLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show history", action: #selector(menuShowHistory), keyEquivalent: ""))
+        if flags.offline {
+            menu.addItem(NSMenuItem(title: "Show demo chat", action: #selector(menuShowDemoChat), keyEquivalent: ""))
+        }
         menu.addItem(NSMenuItem(title: "Copy diagnostics", action: #selector(menuCopyDiagnostics), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(menuQuit), keyEquivalent: "q"))
         for i in menu.items { i.target = self }
@@ -613,6 +644,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuShowHistory() {
         HistoryWindowController.show()
+    }
+
+    @objc private func menuShowDemoChat() {
+        ChatWindowController.showDemo()
     }
 
     // MARK: History retention
