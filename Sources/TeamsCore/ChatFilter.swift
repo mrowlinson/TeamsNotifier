@@ -6,6 +6,10 @@ import Foundation
 ///   notifications bypass this filter entirely (posted directly).
 ///   The app sets `config.muted` per message to the effective value
 ///   (schedule + memory-only manual override) before calling decide.
+/// - Teams per-chat mute: chats muted in the Teams client (conversation
+///   `properties.alerts` == false, fetched+cached by the app) skip with
+///   reason "teams-muted". Beats everything below (keywords, meeting
+///   signals, mentions); only the global mute above keeps its reason.
 /// - Keyword block: a block word in the message plain text forces SKIP
 ///   (reason "keyword-block"), through any filter notify. Checked first
 ///   after mute, so it beats the keyword allow below.
@@ -51,6 +55,11 @@ public enum ChatFilter {
     /// on this reason (spec string).
     public static let mutedReason = "muted"
 
+    /// Skip reason for chats muted in the Teams client (per-chat
+    /// `properties.alerts` == false). Beats every gate below the
+    /// global mute, including meeting-starting and keyword-allow.
+    public static let teamsMutedReason = "teams-muted"
+
     /// Notify reason for the meeting-start gate. The caller posts the
     /// synthesized "Meeting starting: <chat>" body for this reason,
     /// never the triggering message's raw text.
@@ -65,11 +74,13 @@ public enum ChatFilter {
         isEdit: Bool,
         chatDisplayName: String,
         ownerMRI: String?,
-        config: Config
+        config: Config,
+        teamsMutedChatIDs: Set<String> = []
     ) -> Decision {
         decideCore(
             message: message, isEdit: isEdit, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, config: config,
+            teamsMutedChatIDs: teamsMutedChatIDs,
             claimMeetingStart: { _ in true },
             noteMeetingActivity: { _ in }
         )
@@ -87,11 +98,13 @@ public enum ChatFilter {
         ownerMRI: String?,
         config: Config,
         meetingDedup: inout MeetingStartDedup,
-        now: Date
+        now: Date,
+        teamsMutedChatIDs: Set<String> = []
     ) -> Decision {
         decideCore(
             message: message, isEdit: isEdit, chatDisplayName: chatDisplayName,
             ownerMRI: ownerMRI, config: config,
+            teamsMutedChatIDs: teamsMutedChatIDs,
             claimMeetingStart: { chatID in meetingDedup.shouldNotify(chatID: chatID, date: now) },
             noteMeetingActivity: { chatID in meetingDedup.observe(chatID: chatID, date: now) }
         )
@@ -103,12 +116,20 @@ public enum ChatFilter {
         chatDisplayName: String,
         ownerMRI: String?,
         config: Config,
+        teamsMutedChatIDs: Set<String>,
         claimMeetingStart: (String) -> Bool,
         noteMeetingActivity: (String) -> Void
     ) -> Decision {
         // Mute gate first: suppresses all message notifications.
         if config.muted {
             return .skip(reason: mutedReason)
+        }
+        // Teams per-chat mute: beats everything below (keyword gates,
+        // meeting signals, mentions). Above the meeting branch on
+        // purpose: a muted skip claims no window, so unmuting later
+        // still fires meeting-starting for that meeting.
+        if teamsMutedChatIDs.contains(message.chatID) {
+            return .skip(reason: teamsMutedReason)
         }
         // Keyword block beats everything below (keeps its reason even
         // on structural/meeting bodies).

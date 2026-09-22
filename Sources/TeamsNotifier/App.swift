@@ -289,7 +289,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     rawTime: m.composeTime),
                 isEdit: isEdit)
         }
-        let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config, meetingDedup: &meetingDedup, now: now)
+        // Teams per-chat mute (cached, TTL'd; fail-open on resolve errors).
+        let teamsMuted: Set<String> = await api.isChatMuted(chatID: m.chatID) ? [m.chatID] : []
+        let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config, meetingDedup: &meetingDedup, now: now, teamsMutedChatIDs: teamsMuted)
         switch decision {
         case .skip(let reason):
             if reason == ChatFilter.mutedReason {
