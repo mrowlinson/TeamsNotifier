@@ -11,7 +11,7 @@ unreliable; this is a 652KB single binary idling at ~12MB footprint.
 ## Status
 
 Beta. Parsers, filter, framing, auth plumbing, device-code flow, and
-notifications are built and unit-tested (282 tests green). It signs in
+notifications are built and unit-tested (326 tests green). It signs in
 against real work tenants today, but it rides undocumented Teams APIs
 that Microsoft can change without notice; failures are loud (see
 Limits). If something breaks, a log excerpt plus the fault line is
@@ -22,15 +22,31 @@ usually enough to diagnose.
 - Native macOS notifications for Teams 1:1, group, and channel chats.
 - Inline reply from the banner (one HTTPS POST per reply, zero idle
   cost); replies work while muted.
-- Rules engine with a plain-words GUI editor (menu `Edit rules…`):
-  skip own messages, message-type allowlist, skip edits, noisy-chat
-  mention-only, channel-mention passthrough, display-name backup
-  matching, always/never keyword lists.
+- Per-chat conversation window via the notification `Open chat`
+  action: last 50 messages of REST history, live updates while open,
+  edits applied in place, send box at the bottom. One window per
+  chat; Cmd-W closes, the next notification from that chat reopens.
+- Meeting-burst dedup: a meeting's beacon/blob/bot/empty flood
+  collapses to one `Meeting starting: <chat>` notice per chat per
+  2h sliding window. Whole-body JSON blobs and fenced code blocks
+  never notify, in any chat.
+- Rules engine with a guided GUI editor (menu `Edit rules…`): Add
+  picks a goal in plain words (each choice shows what it does + an
+  example before you pick), rows read as sentences, blank list
+  explains itself. Gates: skip own messages, message-type
+  allowlist, skip edits, noisy-chat mention-only, channel-mention
+  passthrough, display-name backup matching, always/never keyword
+  lists (case-insensitive substring; block beats allow; both yield
+  to mute).
 - Weekly scheduled mute with a GUI editor (menu `Edit schedule…`),
   per-entry on/off, manual override that holds until the next
   schedule boundary.
-- Message history viewer (menu `Show history`): every notified
-  message, newest 10k entries + 30 days retention.
+- Message history viewer (menu `Show history`): native window,
+  newest-first table + search + detail pane. Store is LZMESH
+  block-compressed on macOS 27+ (64 records/block, `TNHC` magic),
+  plain JSONL elsewhere; legacy plain files read as-is and migrate
+  once. Notified messages only; newest 10k entries + 30 days
+  retention.
 - Device-code sign-in (no app registration, no redirect URI, no admin
   consent); refresh token in Keychain, nothing else on disk.
 
@@ -43,9 +59,10 @@ usually enough to diagnose.
 <!-- ![Schedule editor](docs/schedule.png) -->
 
 Placeholders until captures land: menu-bar `TN` status (`connected`,
-`Muted · schedule`, …), a notification banner with inline Reply,
-the rules editor (goal picker + readable rows), the schedule editor
-(weekly mute windows table).
+`Muted · schedule`, …), a notification banner with Reply + `Open chat`,
+the chat window (transcript + send box), the rules editor (goal
+picker + sentence rows), the schedule editor (weekly mute windows
+table), the history viewer (table + search + detail).
 
 ## Requirements
 
@@ -70,11 +87,12 @@ the rules editor (goal picker + readable rows), the schedule editor
    > Notifications > TeamsNotifier > Banner style **Alerts**.
 5. Menu `TN` should show `connected`. Send yourself a Teams message from
    another device, or have someone message you; a notification appears.
-   Click a notification copies its body to clipboard (no GUI to open).
-   Long-press/click Reply in the banner to answer inline (one HTTPS POST
-   per reply, zero idle cost). Success is silent (debug log); failure
-   posts "Reply failed: <reason>". Replies work while muted (mute gates
-   inbound notifications only).
+   Each message notification carries two actions: Reply (inline text
+   input, one HTTPS POST per reply, zero idle cost) and `Open chat`
+   (shows the per-chat conversation window). A plain click on the
+   banner copies its body to clipboard. Reply success is silent
+   (debug log); failure posts "Reply failed: <reason>". Replies work
+   while muted (mute gates inbound notifications only).
 6. Optional config `~/.config/teamsnotifier/config.json` (tolerant
    decode: any missing key falls back to its default):
    ```json
@@ -94,8 +112,10 @@ URL back (`http://127.0.0.1:8765/?code=...`, connection-refused page is
 expected — the `?code=` in the address bar is what matters).
 
 Useful flags: `--verbose` (debug to stderr), `--notify-test`,
-`--sign-in`, `--sign-out`, `--offline` (menu only, no network),
-`--auth device|loopback` (default device), `--help`.
+`--chat-demo` (open an offline demo chat window on launch),
+`--sign-in`, `--sign-out`, `--offline` (menu only, no network;
+menu gains `Show demo chat`), `--auth device|loopback` (default
+device), `--help`.
 
 ## Fresh-install behavior
 
@@ -155,13 +175,23 @@ first load, automatically.
 ## History
 
 Every notified message is appended to
-`~/Library/Application Support/TeamsNotifier/history.jsonl` (one JSON
-object per line: `timestamp`, `sender`, `chat`, `threadID`, `text`).
-Menu `Show history` opens it in the default viewer. Notified only:
-muted and filter-suppressed messages (noisy-chat no-mention, own/type/
-edit skips) are never recorded. Retention: newest 10k entries + 30 days,
-pruned on launch and daily. NOTE: plaintext on disk — anyone with file
-access can read past message text.
+`~/Library/Application Support/TeamsNotifier/history.jsonl` (record
+fields: `timestamp`, `sender`, `chat`, `threadID`, `text`). Menu
+`Show history` opens the native viewer (newest-first table + search
++ detail pane). Notified only: muted and filter-suppressed messages
+(noisy-chat no-mention, own/type/edit skips, meeting folds,
+JSON/code blobs) are never recorded. Retention: newest 10k entries
++ 30 days, pruned on launch and daily.
+
+Storage format: on macOS 27+ the file is LZMESH block-compressed
+(magic `TNHC`, version 1, 64 records per block, self-delimiting
+frames: appends touch only the tail, recent-reads decode only the
+tail blocks, prune drops leading whole blocks by header timestamp).
+Older macOS writes plain JSONL (one object per line). Detection is
+by magic bytes, never filename: both formats read on the same path,
+and a legacy plain file migrates to compressed once, atomically, on
+the first compressed append. NOTE: compressed is not encrypted —
+anyone with file access can still read past message text.
 
 ## How it works
 
@@ -188,6 +218,19 @@ access can read past message text.
   decode, dedup ring (10), HTML stripped to plain text, mentions from
   `properties.mentions` (content-span fallback), chat names from
   `threadtopic` or `GET {chatService}/v1/users/ME/conversations/{id}`.
+  Meeting-lifecycle signals (`19:meeting_*` Play beacons, meeting-
+  metadata blobs, Facilitator open/close, meeting-thread empties) fold
+  into one `Meeting starting: <chat>` notice per chat per 2h sliding
+  window; whole-body JSON and fenced-code bodies never notify.
+- Chat window: `Open chat` action (or `--chat-demo` for the offline
+  demo) shows one window per chat: REST history
+  (`GET .../conversations/{id}/messages?pageSize=50`, newest-first on
+  the wire, chronological on screen, text types only), live trouter
+  appends by message id (redeliveries deduped, edits applied in
+  place), send box posting to the same thread endpoint as banner
+  replies. The window sees the full conversation (muted and
+  notify-suppressed messages included); only the notification +
+  history path goes through the filter.
 
 Protocol sources: EionRobb/purple-teams, eisbaw/ost, agent-messenger
 trouter (PR #281), weirdapps/teams-access, roshank8s/teams-api,
