@@ -9,7 +9,7 @@ import Testing
 @Suite("Keyword rules")
 struct KeywordRulesTests {
     let ownerMRI = "8:orgid:11111111-2222-3333-4444-555555555555"
-    let ownerName = "Michael Rowlinson"
+    let ownerName = "Alex Rivera"
 
     func message(
         senderMRI: String? = "8:orgid:sender",
@@ -33,10 +33,10 @@ struct KeywordRulesTests {
         return c
     }
 
-    /// Stock noisy setup: loud BTAC chat silences bare messages.
+    /// Stock noisy setup: loud Watercooler chat silences bare messages.
     func noisy() -> Config {
         config(rules: [
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
             NotifyRule(kind: NotifyRule.noisyChannel, enabled: true),
             NotifyRule(kind: NotifyRule.nameBackup, enabled: true),
         ])
@@ -46,14 +46,14 @@ struct KeywordRulesTests {
 
     @Test func allowWordThroughNoisySilenceNotifies() {
         let c = config(rules: [
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
             NotifyRule(kind: NotifyRule.keywordAllow, value: "outage, urgent", enabled: true),
         ])
         // Baseline: bare message in the noisy chat stays silent.
-        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: noisy()) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: noisy()) == .skip(reason: "loud-no-mention"))
         // Allow word forces notify through the noisy skip.
         let hit = message(content: "prod outage in us-east")
-        #expect(ChatFilter.decide(message: hit, isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: c) == .notify(reason: "keyword-allow"))
+        #expect(ChatFilter.decide(message: hit, isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: c) == .notify(reason: "keyword-allow"))
     }
 
     // MARK: (b) allow through type + edit skips
@@ -104,13 +104,13 @@ struct KeywordRulesTests {
     @Test func blockWordBeatsLoudMentionNotify() {
         // Block forces skip through a notify the noisy gate granted.
         let c = config(rules: [
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
             NotifyRule(kind: NotifyRule.keywordBlock, value: "kudos", enabled: true),
         ])
         let m = message(
             content: "kudos to the team",
             mentions: [Mention(id: "0", mri: ownerMRI, mentionType: "person", displayName: ownerName)])
-        #expect(ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: c) == .skip(reason: "keyword-block"))
+        #expect(ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: c) == .skip(reason: "keyword-block"))
     }
 
     // MARK: (d) block beats allow
@@ -214,7 +214,7 @@ struct KeywordRulesTests {
     // MARK: migration: no keyword rules invented
 
     @Test func migrateAddsNoKeywordRules() {
-        let rules = NotifyRule.migrate(skipOwn: true, notifyOnEdit: false, types: ["Text", "RichText"], loud: "BTAC")
+        let rules = NotifyRule.migrate(skipOwn: true, notifyOnEdit: false, types: ["Text", "RichText"], loud: "Watercooler")
         #expect(rules.map(\.kind) == NotifyRule.migratedKinds)
         #expect(!rules.contains(where: { $0.kind == NotifyRule.keywordAllow || $0.kind == NotifyRule.keywordBlock }))
     }

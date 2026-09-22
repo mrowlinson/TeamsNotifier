@@ -35,8 +35,9 @@ public struct MuteWindow: Codable, Sendable, Equatable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
     }
 
-    /// Owner's long-standing entries: muted Mon-Fri 00:00-07:50 +
-    /// 16:40-24:00 and all day Sat/Sun; unmuted Mon-Fri 07:50-16:40.
+    /// Legacy schedule (the pre-public default): muted Mon-Fri
+    /// 00:00-07:50 + 16:40-24:00 and all day Sat/Sun; unmuted Mon-Fri
+    /// 07:50-16:40.
     ///
     /// Migration source ONLY for configs that predate stored schedules
     /// (existing installs). Never seeded for fresh installs: those get

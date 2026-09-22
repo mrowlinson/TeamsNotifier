@@ -161,7 +161,7 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case skipMyMessages: "On: skip messages you sent. Value ignored."
         case messageTypes: "Value: message types that notify, e.g. Text, RichText. Off: every type notifies (typing, member notices, calls too)."
         case skipEdited: "On: skip edited messages. Off: edits notify. Value ignored."
-        case noisyChats: "Value: chat-name text, e.g. BTAC. Matching chats notify only when you are mentioned."
+        case noisyChats: "Value: chat-name text, e.g. Watercooler. Matching chats notify only when you are mentioned."
         case noisyChannel: "On: @channel/@team/@everyone also notify in noisy chats. Off: only your direct mentions do. Deleting this rule turns it back on. Value ignored."
         case nameBackup: "On: when Teams omits sender/mention IDs, match by your display name. Off: IDs only. Deleting this rule turns it back on. Value ignored."
         case keywordAllow: "Value: words that always notify, e.g. outage, urgent. Case-insensitive; a word matches anywhere in the text. Loses to never-notify words."
@@ -184,7 +184,7 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     public static func valuePlaceholder(for kind: String) -> String {
         switch canonicalKind(kind) {
         case messageTypes: "Text, RichText"
-        case noisyChats: "BTAC"
+        case noisyChats: "Watercooler"
         case keywordAllow: "outage, urgent"
         case keywordBlock: "lunch, kudos"
         default: "(ignored)"
@@ -256,19 +256,19 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     public static func exampleText(for kind: String) -> String {
         switch canonicalKind(kind) {
         case messageTypes: "Types “Text, RichText” notify for plain and formatted messages only."
-        case noisyChats: "Chat text “BTAC” quiets “BTAC War Room” except for your mentions."
+        case noisyChats: "Chat text “Watercooler” quiets “Watercooler Chat” except for your mentions."
         case keywordAllow: "Words “outage, urgent” notify even in noisy chats."
         case keywordBlock: "Words “lunch, kudos” silence the birthday threads."
         default: ""
         }
     }
 
-    /// Starter value for a rule added from the goal picker. Matches
-    /// the legacy fills, so picked rules are valid immediately.
+    /// Starter value for a rule added from the goal picker. A generic
+    /// example, so picked rules are valid immediately.
     public static func defaultValue(for kind: String) -> String {
         switch canonicalKind(kind) {
         case messageTypes: "Text, RichText"
-        case noisyChats: "BTAC"
+        case noisyChats: "Watercooler"
         case keywordAllow: "outage, urgent"
         case keywordBlock: "lunch, kudos"
         default: ""
@@ -318,7 +318,7 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case NotifyRule.messageTypes where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             return "only-these-message-types rule needs a value (e.g. Text, RichText)"
         case NotifyRule.noisyChats where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-            return "noisy-chats-mention-only rule needs chat-name text (e.g. BTAC)"
+            return "noisy-chats-mention-only rule needs chat-name text (e.g. Watercooler)"
         case NotifyRule.keywordAllow where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             return "always-notify-keywords rule needs words (e.g. outage, urgent)"
         case NotifyRule.keywordBlock where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
@@ -340,7 +340,7 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case NotifyRule.messageTypes where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             return "“\(NotifyRule.displayName(for: NotifyRule.messageTypes))” needs a value, e.g. Text, RichText."
         case NotifyRule.noisyChats where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-            return "“\(NotifyRule.displayName(for: NotifyRule.noisyChats))” needs chat-name text, e.g. BTAC."
+            return "“\(NotifyRule.displayName(for: NotifyRule.noisyChats))” needs chat-name text, e.g. Watercooler."
         case NotifyRule.keywordAllow where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             return "“\(NotifyRule.displayName(for: NotifyRule.keywordAllow))” needs words, e.g. outage, urgent."
         case NotifyRule.keywordBlock where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
@@ -369,8 +369,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     // MARK: migration
 
     /// Legacy scalars -> the stock rules. Empty inputs mean "legacy
-    /// fill" (mirrors Config.load: blank loud = BTAC, blank types =
-    /// Text/RichText), so migrated rules encode the exact effective
+    /// fill" (mirrors Config.load: blank loud/types fall back to
+    /// Config.Legacy), so migrated rules encode the exact effective
     /// legacy behavior. Always returns migratedKinds (the six
     /// legacy-mapped kinds); `notifyOnEdit` maps to inverted
     /// skip-edited-messages. The two boolean-only gates (noisy channel
@@ -380,8 +380,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     /// not yet known): no keyword rules are added, and the owner adds
     /// terms via the GUI.
     public static func migrate(skipOwn: Bool, notifyOnEdit: Bool, types: [String], loud: String) -> [NotifyRule] {
-        let effLoud = loud.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "BTAC" : loud
-        let effTypes = types.isEmpty ? ["Text", "RichText"] : types
+        let effLoud = loud.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Config.Legacy.loudSubstring : loud
+        let effTypes = types.isEmpty ? Config.Legacy.notifyTypes : types
         return [
             NotifyRule(kind: NotifyRule.skipMyMessages, enabled: skipOwn),
             NotifyRule(kind: NotifyRule.messageTypes, value: effTypes.joined(separator: ", "), enabled: true),

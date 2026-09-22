@@ -27,6 +27,7 @@ struct MigrateFixTests {
         #expect(c.didMigrateRules == true)
         #expect(c.rulesStored == false)
         // Scalars reflect owner behavior (not permissive blank).
+        #expect(c.owner.displayName == Config.Legacy.ownerDisplayName)
         #expect(c.skipOwnMessages == true)
         #expect(c.notifyOnEdit == false)
         #expect(c.loudSubstring == "BTAC")

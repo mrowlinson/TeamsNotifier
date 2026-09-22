@@ -4,10 +4,10 @@ import Testing
 @Suite("ChatFilter")
 struct ChatFilterTests {
     let ownerMRI = "8:orgid:11111111-2222-3333-4444-555555555555"
-    let ownerName = "Michael Rowlinson"
+    let ownerName = "Alex Rivera"
 
     func config() -> Config {
-        Config(owner: Config.Owner(displayName: ownerName, upn: "michael@company.com", mri: ownerMRI))
+        Config(owner: Config.Owner(displayName: ownerName, upn: "alex@company.com", mri: ownerMRI), loudSubstring: "Watercooler")
     }
 
     func message(
@@ -24,15 +24,15 @@ struct ChatFilterTests {
         )
     }
 
-    // MARK: loud (BTAC) rule
+    // MARK: loud (noisy-chat) rule
 
     @Test func loudChatSilentWithoutMention() {
-        let d = ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: config())
+        let d = ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: config())
         #expect(d == .skip(reason: "loud-no-mention"))
     }
 
     @Test func loudMatchCaseInsensitive() {
-        for name in ["btac alerts", "Btac-x", "xxBTACxx"] {
+        for name in ["watercooler alerts", "Watercooler-x", "xxWatercoolerxx"] {
             let d = ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: name, ownerMRI: ownerMRI, config: config())
             #expect(d == .skip(reason: "loud-no-mention"), "chat \(name)")
         }
@@ -40,13 +40,13 @@ struct ChatFilterTests {
 
     @Test func loudChatNotifiesOnOwnerMRI() {
         let m = message(mentions: [Mention(id: "0", mri: ownerMRI, mentionType: "person", displayName: ownerName)])
-        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Team BTAC", ownerMRI: ownerMRI, config: config())
+        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Team Watercooler", ownerMRI: ownerMRI, config: config())
         #expect(d == .notify(reason: "loud-owner-mention"))
     }
 
     @Test func loudChatNotifiesOnOwnerNameFallback() {
         let m = message(content: "<p>ping</p>", mentions: [Mention(id: "0", mri: nil, displayName: ownerName)])
-        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: config())
+        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: config())
         #expect(d == .notify(reason: "loud-owner-mention"))
     }
 
@@ -57,14 +57,14 @@ struct ChatFilterTests {
             Mention(id: "0", mri: nil, displayName: "Channel"),
         ] {
             let m = message(mentions: [mention])
-            let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: config())
+            let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: config())
             #expect(d == .notify(reason: "loud-channel-mention"), "\(mention)")
         }
     }
 
     @Test func loudChatOtherPersonMentionStaysSilent() {
         let m = message(mentions: [Mention(id: "0", mri: "8:orgid:other", mentionType: "person", displayName: "Bob")])
-        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: config())
+        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: config())
         #expect(d == .skip(reason: "loud-no-mention"))
     }
 
@@ -118,7 +118,7 @@ struct ChatFilterTests {
     @Test func emptyLoudSubstringDisablesRule() {
         var c = config()
         c.loudSubstring = ""
-        let d = ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: c)
+        let d = ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: c)
         #expect(d == .notify(reason: "chat-message"))
     }
 }

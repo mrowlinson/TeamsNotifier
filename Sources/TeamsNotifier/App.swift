@@ -53,10 +53,10 @@ struct Flags {
 
     Flags:
       --config PATH   config file (default ~/.config/teamsnotifier/config.json)
-      --owner NAME    owner display name (default: Michael Rowlinson)
+      --owner NAME    owner display name (default: empty)
       --upn UPN       owner work UPN (expected, matched against token)
       --mri MRI       owner Skype MRI 8:orgid:... (auto-learned if empty)
-      --loud SUBSTR   loud-chat substring (default BTAC)
+      --loud SUBSTR   loud-chat substring (default: empty = rule off)
       --verbose, -v   debug logging (stderr + log file)
       --notify-test   post a test notification and keep running
       --sign-in       force interactive sign-in on launch

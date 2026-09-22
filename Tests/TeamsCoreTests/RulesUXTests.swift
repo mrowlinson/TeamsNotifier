@@ -80,7 +80,7 @@ struct RulesUXTests {
             #expect(r.isValid, "goal pick must add a valid rule: \(o.kind)")
         }
         #expect(NotifyRule.defaultValue(for: NotifyRule.messageTypes) == "Text, RichText")
-        #expect(NotifyRule.defaultValue(for: NotifyRule.noisyChats) == "BTAC")
+        #expect(NotifyRule.defaultValue(for: NotifyRule.noisyChats) == "Watercooler")
         #expect(NotifyRule.defaultValue(for: NotifyRule.skipEdited) == "")
     }
 
@@ -91,7 +91,7 @@ struct RulesUXTests {
             NotifyRule(kind: NotifyRule.skipMyMessages),
             NotifyRule(kind: NotifyRule.messageTypes, value: "Text, RichText"),
             NotifyRule(kind: NotifyRule.skipEdited),
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC"),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler"),
             NotifyRule(kind: NotifyRule.noisyChannel),
             NotifyRule(kind: NotifyRule.nameBackup),
         ]
@@ -132,7 +132,7 @@ struct RulesUXTests {
             NotifyRule(kind: NotifyRule.skipMyMessages),
             NotifyRule(kind: NotifyRule.messageTypes, value: "Text"),
             NotifyRule(kind: NotifyRule.messageTypes, value: "  "),
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC"),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler"),
             NotifyRule(kind: NotifyRule.noisyChats, value: ""),
             NotifyRule(kind: NotifyRule.noisyChannel),
             NotifyRule(kind: NotifyRule.keywordAllow, value: "outage"),
@@ -158,7 +158,7 @@ struct RulesUXTests {
         let noisy = NotifyRule(kind: NotifyRule.noisyChats, value: " ").plainIssue() ?? ""
         #expect(noisy.contains("Noisy chats mention only"))
         #expect(!noisy.contains("noisy-chats-mention-only"))
-        #expect(noisy.contains("BTAC"))
+        #expect(noisy.contains("Watercooler"))
         let empty = NotifyRule(kind: "").plainIssue() ?? ""
         #expect(!empty.isEmpty)
     }
