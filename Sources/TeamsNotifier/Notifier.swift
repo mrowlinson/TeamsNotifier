@@ -5,8 +5,9 @@ import UserNotifications
 
 /// Native notifications. Title = "sender in chat" (or sender when the chat
 /// has no better name). Body = full message text. Sound on. Click = copy
-/// body to clipboard (no GUI to open). Message notifications carry a Reply
-/// text-input action posting to the thread via TeamsAPI.sendReply.
+/// body to clipboard. Message notifications carry two actions: Reply
+/// (text-input, posts to the thread via TeamsAPI.sendReply) and Open chat
+/// (foregrounds the per-chat conversation window for the thread).
 /// Sticky banners: owner sets Alerts style in System Settings > Notifications.
 public final class Notifier: NSObject, @unchecked Sendable {
     public static let shared = Notifier()
@@ -16,6 +17,9 @@ public final class Notifier: NSObject, @unchecked Sendable {
     /// Reply sender, wired by App (needs TeamsAPI). Result failure text is
     /// the loud-failure reason.
     public var onReply: (@Sendable (String, String) async -> Result<Void, Error>)?
+
+    /// Open-chat handler, wired by App (needs TeamsAPI + chat title).
+    public var onOpenChat: (@Sendable (String) async -> Void)?
 
     private override init() {
         super.init()
@@ -33,8 +37,15 @@ public final class Notifier: NSObject, @unchecked Sendable {
             options: [],
             textInputButtonTitle: ReplyInfo.sendButtonTitle,
             textInputPlaceholder: ReplyInfo.textInputPlaceholder)
+        // Open chat: foregrounds the app so the conversation window
+        // appears above the owner's work (menu-bar accessory otherwise
+        // stays behind).
+        let open = UNNotificationAction(
+            identifier: ReplyInfo.openActionID,
+            title: ReplyInfo.openActionTitle,
+            options: [.foreground])
         let message = UNNotificationCategory(
-            identifier: ReplyInfo.categoryID, actions: [reply],
+            identifier: ReplyInfo.categoryID, actions: [reply, open],
             intentIdentifiers: [], options: [])
         center.setNotificationCategories([message])
     }
@@ -95,6 +106,16 @@ extension Notifier: UNUserNotificationCenterDelegate {
            let textResponse = response as? UNTextInputNotificationResponse
         {
             await handleReply(textResponse)
+            return
+        }
+        // Open-chat action: show (or focus) the per-chat window. Never copies.
+        if response.actionIdentifier == ReplyInfo.openActionID {
+            let info = response.notification.request.content.userInfo
+            if let chatID = ReplyInfo.chatID(from: info) {
+                await onOpenChat?(chatID)
+            } else {
+                Log.debug("open-chat ignored (empty thread)")
+            }
             return
         }
         // Any other click/dismiss-with-action copies the body (unchanged).

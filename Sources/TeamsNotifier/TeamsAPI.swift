@@ -54,6 +54,37 @@ public actor TeamsAPI {
         nameCache[chatID] = name
     }
 
+    /// Full conversation fetch for per-chat windows (ost
+    /// read_messages_data path): GET .../messages?pageSize=N, newest-first
+    /// on the wire, chronological out. 401 refreshes the skype token once
+    /// + retries, mirroring sendReply.
+    public func fetchMessages(chatID: String, limit: Int = ChatWindowHistory.defaultPageSize) async throws -> [ChatMessage] {
+        let creds = try await auth.ensureSkypeCredentials()
+        do {
+            return try await getMessages(base: creds.chatServiceBase, chatID: chatID, skypeToken: creds.skypeToken, limit: limit)
+        } catch APIError.http(401, _) {
+            Log.info("chat history 401, refreshing skype token once")
+            let fresh = try await auth.refreshSkypeCredentials()
+            return try await getMessages(base: fresh.chatServiceBase, chatID: chatID, skypeToken: fresh.skypeToken, limit: limit)
+        }
+    }
+
+    private func getMessages(base: String, chatID: String, skypeToken: String, limit: Int) async throws -> [ChatMessage] {
+        guard let url = ChatWindowHistory.url(chatServiceBase: base, chatID: chatID, pageSize: limit) else {
+            throw APIError.network("bad history URL for \(chatID)")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("skypetoken=\(skypeToken)", forHTTPHeaderField: "Authentication")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw APIError.network("no HTTP response") }
+        guard http.statusCode == 200 else {
+            throw APIError.http(http.statusCode, String(data: data, encoding: .utf8)?.prefix(200).description ?? "")
+        }
+        return ChatWindowHistory.parseMessagesResponse(data)
+    }
+
     /// Inline reply: POST one message to a thread (ReplyPayload provenance).
     /// Same skype token + base as chat REST (no new auth). Any 2xx = sent
     /// (refs see 201 Created). 401 refreshes the skype token once + retries,

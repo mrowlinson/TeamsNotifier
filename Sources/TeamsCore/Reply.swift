@@ -55,6 +55,9 @@ public enum ReplyInfo {
     public static let categoryID = "TN_MESSAGE"
     public static let replyActionID = "TN_REPLY"
     public static let chatIDKey = "TNChatID"
+    /// Second action next to Reply: opens the per-chat window.
+    public static let openActionID = "TN_OPEN_CHAT"
+    public static let openActionTitle = "Open chat"
     /// Action button title: banner/alert hover + NC expanded. Keep "Reply".
     public static let actionTitle = "Reply"
     /// Inline-reply send button title (expanded UI).
