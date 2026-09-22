@@ -1,3 +1,5 @@
+import Foundation
+
 /// Notify/skip decision. Pure; every branch covered by tests.
 ///
 /// - Muted: everything skipped (reason "muted"). System/sign-in-needed
@@ -7,6 +9,21 @@
 /// - Keyword block: a block word in the message plain text forces SKIP
 ///   (reason "keyword-block"), through any filter notify. Checked first
 ///   after mute, so it beats the keyword allow below.
+/// - Structural bodies (never notifiable, beat keyword-allow but yield
+///   to keyword-block above so a blocked word keeps its reason):
+///   empty-text ("empty-text": meeting-thread or wire-blank empties;
+///   markup-only bodies in normal chats still notify, legacy), raw
+///   JSON ("json-blob"), fenced code ("code-blob"), Facilitator close
+///   ("facilitator-close": folds, never opens a meeting notice).
+/// - Meeting-start: Play beacons, meeting-metadata blobs, Facilitator
+///   opens notify ONCE per chat per activity window (reason
+///   "meeting-starting": the caller posts the synthesized "Meeting
+///   starting: <chat>" body, never the raw text); repeats skip
+///   ("meeting-start-suppressed"). Facilitator closes and
+///   meeting-thread empty/JSON/code bodies extend an open window
+///   (fold, never notify). The stateful overload below owns the
+///   window; the stateless decide always takes the first-signal
+///   branch (documented; the app uses the overload).
 /// - Keyword allow: an allow word in the message plain text forces
 ///   NOTIFY (reason "keyword-allow"), through any filter skip (own,
 ///   type, edit, noisy). Both keyword gates yield to mute.
@@ -34,6 +51,15 @@ public enum ChatFilter {
     /// on this reason (spec string).
     public static let mutedReason = "muted"
 
+    /// Notify reason for the meeting-start gate. The caller posts the
+    /// synthesized "Meeting starting: <chat>" body for this reason,
+    /// never the triggering message's raw text.
+    public static let meetingStartingReason = "meeting-starting"
+
+    /// Stateless decide: meeting open-signals (Play beacons, meeting
+    /// blobs, Facilitator opens) always take the first-signal branch
+    /// (notify "meeting-starting"). Prefer the stateful overload: it
+    /// suppresses repeats within the per-chat window.
     public static func decide(
         message: EventMessage.Message,
         isEdit: Bool,
@@ -41,14 +67,77 @@ public enum ChatFilter {
         ownerMRI: String?,
         config: Config
     ) -> Decision {
+        decideCore(
+            message: message, isEdit: isEdit, chatDisplayName: chatDisplayName,
+            ownerMRI: ownerMRI, config: config,
+            claimMeetingStart: { _ in true },
+            noteMeetingActivity: { _ in }
+        )
+    }
+
+    /// Stateful decide: first meeting signal per chat notifies
+    /// ("meeting-starting"); repeats within the per-chat window skip
+    /// ("meeting-start-suppressed"); a later meeting (gap > window)
+    /// notifies again. The app keeps one MeetingStartDedup for the
+    /// process and passes `now` per message.
+    public static func decide(
+        message: EventMessage.Message,
+        isEdit: Bool,
+        chatDisplayName: String,
+        ownerMRI: String?,
+        config: Config,
+        meetingDedup: inout MeetingStartDedup,
+        now: Date
+    ) -> Decision {
+        decideCore(
+            message: message, isEdit: isEdit, chatDisplayName: chatDisplayName,
+            ownerMRI: ownerMRI, config: config,
+            claimMeetingStart: { chatID in meetingDedup.shouldNotify(chatID: chatID, date: now) },
+            noteMeetingActivity: { chatID in meetingDedup.observe(chatID: chatID, date: now) }
+        )
+    }
+
+    static func decideCore(
+        message: EventMessage.Message,
+        isEdit: Bool,
+        chatDisplayName: String,
+        ownerMRI: String?,
+        config: Config,
+        claimMeetingStart: (String) -> Bool,
+        noteMeetingActivity: (String) -> Void
+    ) -> Decision {
         // Mute gate first: suppresses all message notifications.
         if config.muted {
             return .skip(reason: mutedReason)
         }
-        // Keyword gates: block beats allow; both beat every other gate.
+        // Keyword block beats everything below (keeps its reason even
+        // on structural/meeting bodies).
         let text = message.plainText
         if containsKeyword(text, config.blockKeywords) {
             return .skip(reason: "keyword-block")
+        }
+        // Structural bodies: never notifiable, beat keyword-allow.
+        // Meeting-thread folds extend an open window (never open one).
+        switch MeetingSignal.classify(message: message, chatDisplayName: chatDisplayName) {
+        case .emptyText:
+            if MeetingSignal.isMeetingThread(message.chatID) { noteMeetingActivity(message.chatID) }
+            return .skip(reason: "empty-text")
+        case .jsonBlob:
+            if MeetingSignal.isMeetingThread(message.chatID) { noteMeetingActivity(message.chatID) }
+            return .skip(reason: "json-blob")
+        case .codeBlob:
+            if MeetingSignal.isMeetingThread(message.chatID) { noteMeetingActivity(message.chatID) }
+            return .skip(reason: "code-blob")
+        case .facilitatorClose:
+            noteMeetingActivity(message.chatID)
+            return .skip(reason: "facilitator-close")
+        case .playBeacon, .meetingBlob, .facilitatorOpen:
+            if claimMeetingStart(message.chatID) {
+                return .notify(reason: meetingStartingReason)
+            }
+            return .skip(reason: "meeting-start-suppressed")
+        case .normal:
+            break
         }
         if containsKeyword(text, config.allowKeywords) {
             return .notify(reason: "keyword-allow")
