@@ -94,8 +94,17 @@ final class ChatWindowController: NSWindowController {
         transcriptView.isEditable = false
         transcriptView.isSelectable = true
         transcriptView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        // Bare NSTextView() has a zero frame and a zero-width text
+        // container: no layout, empty transcript. Standard
+        // NSTextView-in-NSScrollView setup so the view tracks the
+        // scroller width and grows vertically.
+        transcriptView.isVerticallyResizable = true
+        transcriptView.isHorizontallyResizable = false
+        transcriptView.autoresizingMask = [.width]
         let transcriptScroll = NSScrollView()
         transcriptScroll.hasVerticalScroller = true
+        transcriptScroll.hasHorizontalScroller = false
+        transcriptScroll.autohidesScrollers = true
         transcriptScroll.documentView = transcriptView
         transcriptScroll.translatesAutoresizingMaskIntoConstraints = false
 
@@ -138,6 +147,18 @@ final class ChatWindowController: NSWindowController {
             sendRow.trailingAnchor.constraint(equalTo: g.trailingAnchor),
             sendRow.bottomAnchor.constraint(equalTo: g.bottomAnchor),
         ])
+        // The scroll view still has a zero frame here (autolayout not
+        // run): proportional autoresizing from a zero superview leaves
+        // the document view collapsed. Force layout, then fit the text
+        // view to the real content size; autoresizing [.width] tracks
+        // later resizes once both sizes are nonzero.
+        content.layoutSubtreeIfNeeded()
+        let cs = transcriptScroll.contentSize
+        transcriptView.minSize = NSSize(width: 0, height: cs.height)
+        transcriptView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        transcriptView.frame = NSRect(x: 0, y: 0, width: cs.width, height: max(cs.height, 1))
+        transcriptView.textContainer?.containerSize = NSSize(width: cs.width, height: CGFloat.greatestFiniteMagnitude)
+        transcriptView.textContainer?.widthTracksTextView = true
     }
 
     // MARK: history + live

@@ -99,8 +99,15 @@ final class HistoryWindowController: NSWindowController {
         detailView.isEditable = false
         detailView.isSelectable = true
         detailView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        // Same bare-NSTextView zero-frame bug as the chat transcript:
+        // standard scroll setup so detail text lays out.
+        detailView.isVerticallyResizable = true
+        detailView.isHorizontallyResizable = false
+        detailView.autoresizingMask = [.width]
         let detailScroll = NSScrollView()
         detailScroll.hasVerticalScroller = true
+        detailScroll.hasHorizontalScroller = false
+        detailScroll.autohidesScrollers = true
         detailScroll.documentView = detailView
         detailScroll.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -143,6 +150,16 @@ final class HistoryWindowController: NSWindowController {
             emptyLabel.centerYAnchor.constraint(equalTo: split.centerYAnchor),
         ])
         split.setPosition(320, ofDividerAt: 0)
+        // Zero-frame scroll view at build time (autolayout): force
+        // layout, then fit the text view to the real content size
+        // (same as the chat transcript).
+        content.layoutSubtreeIfNeeded()
+        let dcs = detailScroll.contentSize
+        detailView.minSize = NSSize(width: 0, height: dcs.height)
+        detailView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        detailView.frame = NSRect(x: 0, y: 0, width: dcs.width, height: max(dcs.height, 1))
+        detailView.textContainer?.containerSize = NSSize(width: dcs.width, height: CGFloat.greatestFiniteMagnitude)
+        detailView.textContainer?.widthTracksTextView = true
     }
 
     // MARK: load + live update
