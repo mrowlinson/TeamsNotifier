@@ -90,7 +90,7 @@ struct RulesRenameTests {
         #expect(NotifyRule.canonicalKind(NotifyRule.noisyChats) == NotifyRule.noisyChats)
         #expect(NotifyRule.canonicalKind("my-future-rule") == "my-future-rule")
         #expect(NotifyRule.canonicalKind("") == "")
-        #expect(NotifyRule.knownKinds.count == 6)
+        #expect(NotifyRule.knownKinds.count == 8)
     }
 
     @Test func oldKindsDecodeToNew() throws {
@@ -467,6 +467,12 @@ struct RulesRenameTests {
         #expect(NotifyRule.valuePlaceholder(for: NotifyRule.skipEdited) == "(ignored)")
         #expect(NotifyRule.usesValue(NotifyRule.messageTypes))
         #expect(NotifyRule.usesValue(NotifyRule.noisyChats))
+        #expect(NotifyRule.usesValue(NotifyRule.keywordAllow))
+        #expect(NotifyRule.usesValue(NotifyRule.keywordBlock))
+        #expect(NotifyRule.valueLabel(for: NotifyRule.keywordAllow) == "Words:")
+        #expect(NotifyRule.valueLabel(for: NotifyRule.keywordBlock) == "Words:")
+        #expect(NotifyRule.valuePlaceholder(for: NotifyRule.keywordAllow) == "outage, urgent")
+        #expect(NotifyRule.valuePlaceholder(for: NotifyRule.keywordBlock) == "lunch, kudos")
         #expect(!NotifyRule.usesValue(NotifyRule.skipMyMessages))
         #expect(!NotifyRule.usesValue(NotifyRule.skipEdited))
         #expect(!NotifyRule.usesValue(NotifyRule.noisyChannel))

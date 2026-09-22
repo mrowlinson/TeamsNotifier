@@ -37,6 +37,14 @@ public struct Config: Codable, Sendable {
     /// Message types that notify (prefix match on messagetype's first
     /// segment, e.g. "Text", "RichText"). Default ["Text", "RichText"].
     public var notifyTypes: [String]
+    /// Words that force NOTIFY when found (case-insensitive substring)
+    /// in the message plain text. Default []. Synced from the first
+    /// always-notify-keywords rule; absent/disabled/blank = no words.
+    public var allowKeywords: [String]
+    /// Words that force SKIP when found (case-insensitive substring)
+    /// in the message plain text. Beats allowKeywords. Default [].
+    /// Synced from the first never-notify-keywords rule.
+    public var blockKeywords: [String]
     /// Legacy persisted mute flag. The app overwrites it per message with the
     /// effective value (schedule + memory-only manual override), so the
     /// stored value no longer means anything. Kept so old configs still
@@ -84,6 +92,8 @@ public struct Config: Codable, Sendable {
         noisyChannelMentions: Bool = true,
         matchByDisplayName: Bool = true,
         notifyTypes: [String] = ["Text", "RichText"],
+        allowKeywords: [String] = [],
+        blockKeywords: [String] = [],
         muted: Bool = false,
         muteWindows: [MuteWindow] = [],
         scheduleTZ: String = MuteSchedule.defaultTimeZoneID,
@@ -96,6 +106,8 @@ public struct Config: Codable, Sendable {
         self.noisyChannelMentions = noisyChannelMentions
         self.matchByDisplayName = matchByDisplayName
         self.notifyTypes = notifyTypes
+        self.allowKeywords = allowKeywords
+        self.blockKeywords = blockKeywords
         self.muted = muted
         self.muteWindows = muteWindows
         self.scheduleTZ = scheduleTZ
@@ -105,6 +117,7 @@ public struct Config: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case owner, loudSubstring, notifyOnEdit, skipOwnMessages, notifyTypes, muted
         case noisyChannelMentions, matchByDisplayName
+        case allowKeywords, blockKeywords
         case muteWindows, scheduleTZ
         case notifyRules
     }
@@ -121,6 +134,8 @@ public struct Config: Codable, Sendable {
         noisyChannelMentions = (try? c.decodeIfPresent(Bool.self, forKey: .noisyChannelMentions)) ?? d.noisyChannelMentions
         matchByDisplayName = (try? c.decodeIfPresent(Bool.self, forKey: .matchByDisplayName)) ?? d.matchByDisplayName
         notifyTypes = (try? c.decodeIfPresent([String].self, forKey: .notifyTypes)) ?? d.notifyTypes
+        allowKeywords = (try? c.decodeIfPresent([String].self, forKey: .allowKeywords)) ?? d.allowKeywords
+        blockKeywords = (try? c.decodeIfPresent([String].self, forKey: .blockKeywords)) ?? d.blockKeywords
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? d.muted
         // Schedule keys: present-but-undecodable falls back to the owner
         // schedule AND records a fault-log line (a silent try? would hide
@@ -229,6 +244,18 @@ public struct Config: Codable, Sendable {
             matchByDisplayName = r.enabled
         } else {
             matchByDisplayName = true
+        }
+        // Keyword gates: first match per kind wins; absent, disabled,
+        // or blank/empty parses to no words (gate off).
+        if let r = first(NotifyRule.keywordAllow), r.enabled {
+            allowKeywords = NotifyRule.parseKeywords(r.value)
+        } else {
+            allowKeywords = []
+        }
+        if let r = first(NotifyRule.keywordBlock), r.enabled {
+            blockKeywords = NotifyRule.parseKeywords(r.value)
+        } else {
+            blockKeywords = []
         }
     }
 
