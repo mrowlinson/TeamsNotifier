@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var auth = AuthManager()
     private var api: TeamsAPI?
     private var trouter: TrouterClient?
+    private var meetingDedup = MeetingStartDedup()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu-bar only, no dock icon
@@ -288,7 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     rawTime: m.composeTime),
                 isEdit: isEdit)
         }
-        let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config)
+        let decision = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chatName, ownerMRI: ownerMRI, config: config, meetingDedup: &meetingDedup, now: now)
         switch decision {
         case .skip(let reason):
             if reason == ChatFilter.mutedReason {
@@ -297,19 +298,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Log.debug("skip [\(reason)] \(m.senderName) in \(chatName)")
             }
         case .notify(let reason):
+            // Meeting-start: synthesized body (raw beacons/blobs never shown).
+            let body: String
             let title: String
-            if chatName.isEmpty || chatName == m.chatID {
+            if reason == ChatFilter.meetingStartingReason {
+                if chatName.isEmpty || chatName == m.chatID {
+                    title = "Teams meeting"
+                    body = "Meeting starting"
+                } else {
+                    title = chatName
+                    body = "Meeting starting: \(chatName)"
+                }
+            } else if chatName.isEmpty || chatName == m.chatID {
                 title = m.senderName.isEmpty ? "Teams message" : m.senderName
+                body = m.plainText
             } else {
                 title = m.senderName.isEmpty ? chatName : "\(m.senderName) in \(chatName)"
+                body = m.plainText
             }
             Log.info("notify [\(reason)] \(title)")
             hasUnread = true
             updateIcon()
-            Notifier.shared.post(title: title, body: m.plainText, id: m.messageID.isEmpty ? nil : m.messageID, chatID: m.chatID)
+            Notifier.shared.post(title: title, body: body, id: m.messageID.isEmpty ? nil : m.messageID, chatID: m.chatID)
             // History: notified messages only (suppressed stay out).
             // Sync tiny append; failures are debug-logged, never user faults.
-            HistoryStore.append(sender: m.senderName, chat: chatName, threadID: m.chatID, text: m.plainText, date: now)
+            HistoryStore.append(sender: m.senderName, chat: chatName, threadID: m.chatID, text: body, date: now)
         }
     }
 
