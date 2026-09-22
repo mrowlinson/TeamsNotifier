@@ -10,6 +10,7 @@ import Foundation
 ///   decode: they map to their replacements on load (see `legacyKinds`).
 /// - `value`: payload. only-these-message-types = comma-separated type
 ///   heads ("Text, RichText"); noisy-chats-mention-only = chat-name text;
+///   always/never-notify-keywords = comma- or line-separated words;
 ///   the rest ignore it.
 /// - `enabled`: per-rule on/off switch. A disabled (or absent) known
 ///   rule switches its gate off: own messages and edits notify, the
@@ -74,10 +75,25 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     /// deleting the rule reverts to ON). Disabled = IDs only. Value
     /// ignored.
     public static let nameBackup = "my-name-as-backup"
+    /// Messages whose plain text contains one of the value's words
+    /// (case-insensitive substring) always notify, through any filter
+    /// skip except mute. Loses to keywordBlock on the same message.
+    public static let keywordAllow = "always-notify-keywords"
+    /// Messages whose plain text contains one of the value's words
+    /// (case-insensitive substring) never notify, through any filter
+    /// notify except mute (which already skips). Beats keywordAllow.
+    public static let keywordBlock = "never-notify-keywords"
 
     /// Known ids, in migration order. The set is open: the GUI kind field
     /// accepts anything, and unknown ids round-trip untouched.
-    public static let knownKinds = [skipMyMessages, messageTypes, skipEdited, noisyChats, noisyChannel, nameBackup]
+    public static let knownKinds = [skipMyMessages, messageTypes, skipEdited, noisyChats, noisyChannel, nameBackup, keywordAllow, keywordBlock]
+
+    /// Kinds migrate() writes: the six legacy-mapped gates, in
+    /// knownKinds order. The keyword kinds are NEVER migrated (the
+    /// owner term list is not yet known): existing installs get no
+    /// keyword rules, fresh installs stay blank, and the owner adds
+    /// terms via the GUI.
+    public static let migratedKinds = [skipMyMessages, messageTypes, skipEdited, noisyChats, noisyChannel, nameBackup]
 
     /// Pre-rename ids -> replacements. Applied on decode (and to GUI
     /// input), so old stored configs keep working unchanged.
@@ -105,6 +121,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case noisyChats: "Noisy chats mention only"
         case noisyChannel: "Noisy chats channel mentions"
         case nameBackup: "My name as backup"
+        case keywordAllow: "Always notify keywords"
+        case keywordBlock: "Never notify keywords"
         default: kind
         }
     }
@@ -146,6 +164,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case noisyChats: "Value: chat-name text, e.g. BTAC. Matching chats notify only when you are mentioned."
         case noisyChannel: "On: @channel/@team/@everyone also notify in noisy chats. Off: only your direct mentions do. Deleting this rule turns it back on. Value ignored."
         case nameBackup: "On: when Teams omits sender/mention IDs, match by your display name. Off: IDs only. Deleting this rule turns it back on. Value ignored."
+        case keywordAllow: "Value: words that always notify, e.g. outage, urgent. Case-insensitive; a word matches anywhere in the text. Loses to never-notify words."
+        case keywordBlock: "Value: words that never notify, e.g. lunch, kudos. Case-insensitive; a word matches anywhere in the text. Beats always-notify words."
         default: "Custom type: stored and round-tripped, not enforced yet."
         }
     }
@@ -155,6 +175,7 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         switch canonicalKind(kind) {
         case messageTypes: "Types:"
         case noisyChats: "Chat text:"
+        case keywordAllow, keywordBlock: "Words:"
         default: "Value:"
         }
     }
@@ -164,6 +185,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         switch canonicalKind(kind) {
         case messageTypes: "Text, RichText"
         case noisyChats: "BTAC"
+        case keywordAllow: "outage, urgent"
+        case keywordBlock: "lunch, kudos"
         default: "(ignored)"
         }
     }
@@ -172,7 +195,7 @@ public struct NotifyRule: Codable, Sendable, Equatable {
     /// otherwise).
     public static func usesValue(_ kind: String) -> Bool {
         switch canonicalKind(kind) {
-        case messageTypes, noisyChats: true
+        case messageTypes, noisyChats, keywordAllow, keywordBlock: true
         default: false
         }
     }
@@ -206,6 +229,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case noisyChats: "Quiet down noisy chats"
         case noisyChannel: "Let channel mentions through in noisy chats"
         case nameBackup: "Match my name when Teams omits IDs"
+        case keywordAllow: "Always notify on certain words"
+        case keywordBlock: "Never notify on certain words"
         default: "Custom rule of my own"
         }
     }
@@ -220,6 +245,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         case noisyChats: "Chats whose name matches your text notify only when you are mentioned."
         case noisyChannel: "Channel, team and everyone mentions also notify in noisy chats. Turn it off for direct mentions only. Deleting this rule turns it back on."
         case nameBackup: "When Teams omits sender and mention IDs, match by your display name instead. Turn it off for IDs only. Deleting this rule turns it back on."
+        case keywordAllow: "Messages containing your words always notify, even in noisy chats or skipped types. Matching is case-insensitive; a word matches anywhere inside the text."
+        case keywordBlock: "Messages containing your words stay silent, even when they would otherwise notify. Matching is case-insensitive; a word matches anywhere inside the text. Wins over always-notify words."
         default: "Custom type: stored and round-tripped, not enforced yet. A future update may implement it."
         }
     }
@@ -230,6 +257,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         switch canonicalKind(kind) {
         case messageTypes: "Types “Text, RichText” notify for plain and formatted messages only."
         case noisyChats: "Chat text “BTAC” quiets “BTAC War Room” except for your mentions."
+        case keywordAllow: "Words “outage, urgent” notify even in noisy chats."
+        case keywordBlock: "Words “lunch, kudos” silence the birthday threads."
         default: ""
         }
     }
@@ -240,6 +269,8 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         switch canonicalKind(kind) {
         case messageTypes: "Text, RichText"
         case noisyChats: "BTAC"
+        case keywordAllow: "outage, urgent"
+        case keywordBlock: "lunch, kudos"
         default: ""
         }
     }
@@ -257,6 +288,10 @@ public struct NotifyRule: Codable, Sendable, Equatable {
             v.isEmpty ? "Noisy chats notify only on mention (needs chat text)." : "Chats matching “\(v)” notify only on mention."
         case noisyChannel: "Channel mentions also notify in noisy chats."
         case nameBackup: "Match by your display name when IDs are missing."
+        case keywordAllow:
+            v.isEmpty ? "Always notify on certain words (needs words)." : "Messages containing “\(v)” always notify."
+        case keywordBlock:
+            v.isEmpty ? "Never notify on certain words (needs words)." : "Messages containing “\(v)” never notify."
         default:
             v.isEmpty ? "Custom rule “\(rule.kind)” (stored, not enforced yet)." : "Custom rule “\(rule.kind)” = “\(v)” (stored, not enforced yet)."
         }
@@ -284,6 +319,10 @@ public struct NotifyRule: Codable, Sendable, Equatable {
             return "only-these-message-types rule needs a value (e.g. Text, RichText)"
         case NotifyRule.noisyChats where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             return "noisy-chats-mention-only rule needs chat-name text (e.g. BTAC)"
+        case NotifyRule.keywordAllow where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "always-notify-keywords rule needs words (e.g. outage, urgent)"
+        case NotifyRule.keywordBlock where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "never-notify-keywords rule needs words (e.g. lunch, kudos)"
         default:
             return nil
         }
@@ -302,6 +341,10 @@ public struct NotifyRule: Codable, Sendable, Equatable {
             return "“\(NotifyRule.displayName(for: NotifyRule.messageTypes))” needs a value, e.g. Text, RichText."
         case NotifyRule.noisyChats where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             return "“\(NotifyRule.displayName(for: NotifyRule.noisyChats))” needs chat-name text, e.g. BTAC."
+        case NotifyRule.keywordAllow where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "“\(NotifyRule.displayName(for: NotifyRule.keywordAllow))” needs words, e.g. outage, urgent."
+        case NotifyRule.keywordBlock where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return "“\(NotifyRule.displayName(for: NotifyRule.keywordBlock))” needs words, e.g. lunch, kudos."
         default:
             return nil
         }
@@ -313,16 +356,29 @@ public struct NotifyRule: Codable, Sendable, Equatable {
         value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
+    /// "outage, urgent\nsev1" -> ["outage", "urgent", "sev1"].
+    /// Splits on commas or line breaks, trims pieces, drops empties.
+    /// Scalar split (CRLF is one Character, so a whereSeparator test
+    /// would miss it).
+    public static func parseKeywords(_ value: String) -> [String] {
+        value.components(separatedBy: CharacterSet(charactersIn: ",\n\r"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     // MARK: migration
 
     /// Legacy scalars -> the stock rules. Empty inputs mean "legacy
     /// fill" (mirrors Config.load: blank loud = BTAC, blank types =
     /// Text/RichText), so migrated rules encode the exact effective
-    /// legacy behavior. Always returns all six kinds, in knownKinds
-    /// order; `notifyOnEdit` maps to inverted skip-edited-messages. The
-    /// two boolean-only gates (noisy channel mentions, name backup) had
-    /// no legacy scalar: they migrate enabled, matching the hardcoded
-    /// behavior every install already had.
+    /// legacy behavior. Always returns migratedKinds (the six
+    /// legacy-mapped kinds); `notifyOnEdit` maps to inverted
+    /// skip-edited-messages. The two boolean-only gates (noisy channel
+    /// mentions, name backup) had no legacy scalar: they migrate
+    /// enabled, matching the hardcoded behavior every install already
+    /// had. Keyword kinds are NEVER migrated (the owner term list is
+    /// not yet known): no keyword rules are added, and the owner adds
+    /// terms via the GUI.
     public static func migrate(skipOwn: Bool, notifyOnEdit: Bool, types: [String], loud: String) -> [NotifyRule] {
         let effLoud = loud.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "BTAC" : loud
         let effTypes = types.isEmpty ? ["Text", "RichText"] : types

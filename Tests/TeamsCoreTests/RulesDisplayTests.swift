@@ -12,6 +12,8 @@ struct RulesDisplayTests {
         (NotifyRule.noisyChats, "Noisy chats mention only"),
         (NotifyRule.noisyChannel, "Noisy chats channel mentions"),
         (NotifyRule.nameBackup, "My name as backup"),
+        (NotifyRule.keywordAllow, "Always notify keywords"),
+        (NotifyRule.keywordBlock, "Never notify keywords"),
     ]
 
     // MARK: (a) every known kind has a non-ID display name

@@ -18,7 +18,7 @@ struct MigrateFixTests {
         #expect(c.muteWindows == MuteWindow.ownerSchedule)
         #expect(c.didMigrateSchedule == true)
         // 6 stock owner rules migrated (exact hardcoded legacy behavior).
-        #expect(c.notifyRules.map(\.kind) == NotifyRule.knownKinds)
+        #expect(c.notifyRules.map(\.kind) == NotifyRule.migratedKinds)
         #expect(c.notifyRules.count == 6)
         #expect(c.notifyRules.allSatisfy { $0.enabled })
         let byKind = Dictionary(uniqueKeysWithValues: c.notifyRules.map { ($0.kind, $0) })

@@ -4,6 +4,15 @@
 ///   notifications bypass this filter entirely (posted directly).
 ///   The app sets `config.muted` per message to the effective value
 ///   (schedule + memory-only manual override) before calling decide.
+/// - Keyword block: a block word in the message plain text forces SKIP
+///   (reason "keyword-block"), through any filter notify. Checked first
+///   after mute, so it beats the keyword allow below.
+/// - Keyword allow: an allow word in the message plain text forces
+///   NOTIFY (reason "keyword-allow"), through any filter skip (own,
+///   type, edit, noisy). Both keyword gates yield to mute.
+/// - Keyword match: case-insensitive SUBSTRING against
+///   `message.plainText` (HTML stripped, entities decoded), any chat,
+///   any message type carrying text. Opposing hits: BLOCK wins.
 /// - Own messages: skipped (when skipOwnMessages). Sender match is MRI
 ///   preferred with a display-name backup (when matchByDisplayName).
 /// - Non-text types (Control/Typing, ThreadActivity, ...): skipped unless
@@ -35,6 +44,14 @@ public enum ChatFilter {
         // Mute gate first: suppresses all message notifications.
         if config.muted {
             return .skip(reason: mutedReason)
+        }
+        // Keyword gates: block beats allow; both beat every other gate.
+        let text = message.plainText
+        if containsKeyword(text, config.blockKeywords) {
+            return .skip(reason: "keyword-block")
+        }
+        if containsKeyword(text, config.allowKeywords) {
+            return .notify(reason: "keyword-allow")
         }
         // Own message?
         if config.skipOwnMessages, isOwnMessage(message, ownerMRI: ownerMRI, ownerDisplayName: config.owner.displayName, matchByName: config.matchByDisplayName) {
@@ -80,5 +97,16 @@ public enum ChatFilter {
     static func isLoudChat(_ name: String, substring: String) -> Bool {
         guard !substring.isEmpty else { return false }
         return name.range(of: substring, options: .caseInsensitive) != nil
+    }
+
+    /// Any keyword found as a case-insensitive substring of the text?
+    /// Empty lists never hit; blank keywords are skipped (parse drops
+    /// them, but in-memory configs may carry them).
+    static func containsKeyword(_ text: String, _ keywords: [String]) -> Bool {
+        guard !keywords.isEmpty, !text.isEmpty else { return false }
+        return keywords.contains {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && text.range(of: $0, options: .caseInsensitive) != nil
+        }
     }
 }

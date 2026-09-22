@@ -90,7 +90,7 @@ struct NotifyRulesTests {
         #expect(migrated.didMigrateRules == true)
         #expect(migrated.rulesStored == false)
         let kinds = migrated.notifyRules.map(\.kind)
-        #expect(kinds == NotifyRule.knownKinds)
+        #expect(kinds == NotifyRule.migratedKinds)
         let allOn = migrated.notifyRules.allSatisfy { $0.enabled }
         #expect(allOn)
         let loudValue = migrated.notifyRules.first(where: { $0.kind == NotifyRule.noisyChats })?.value
@@ -136,7 +136,7 @@ struct NotifyRulesTests {
             toFile: path, atomically: true, encoding: .utf8)
         let first = try Config.load(from: path)
         let firstKinds = first.notifyRules.map(\.kind)
-        #expect(firstKinds == NotifyRule.knownKinds)
+        #expect(firstKinds == NotifyRule.migratedKinds)
         #expect(first.didMigrateRules == true)
         let stored = try String(contentsOfFile: path, encoding: .utf8)
         #expect(stored.contains("notifyRules"))
@@ -278,11 +278,15 @@ struct NotifyRulesTests {
         #expect(NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC").isValid)
         #expect(NotifyRule(kind: NotifyRule.noisyChannel).isValid)
         #expect(NotifyRule(kind: NotifyRule.nameBackup).isValid)
+        #expect(NotifyRule(kind: NotifyRule.keywordAllow, value: "outage, urgent").isValid)
+        #expect(NotifyRule(kind: NotifyRule.keywordBlock, value: "lunch").isValid)
         #expect(NotifyRule(kind: "anything-new").isValid)
         #expect(NotifyRule(kind: "anything-new", value: "").isValid)
         #expect(!NotifyRule(kind: "").isValid)
         #expect(!NotifyRule(kind: NotifyRule.messageTypes, value: "  ").isValid)
         #expect(!NotifyRule(kind: NotifyRule.noisyChats, value: "").isValid)
+        #expect(!NotifyRule(kind: NotifyRule.keywordAllow, value: "  ").isValid)
+        #expect(!NotifyRule(kind: NotifyRule.keywordBlock, value: "").isValid)
     }
 
     @Test func parseTypes() {
@@ -296,7 +300,7 @@ struct NotifyRulesTests {
         let json = #"{"notifyTypes":["Text"],"notifyRules":"nope"}"#
         var c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         let remigKinds = c.notifyRules.map(\.kind)
-        #expect(remigKinds == NotifyRule.knownKinds)
+        #expect(remigKinds == NotifyRule.migratedKinds)
         let remigTypes = c.notifyRules.first(where: { $0.kind == NotifyRule.messageTypes })?.value
         #expect(remigTypes == "Text")
         let w = c.normalizeRules()
