@@ -120,7 +120,7 @@ struct NotifySettingsTests {
 @Suite("Mute gate")
 struct MuteTests {
     let ownerMRI = "8:orgid:owner"
-    let ownerName = "Michael Rowlinson"
+    let ownerName = "Alex Rivera"
 
     func message(mentions: [Mention] = []) -> EventMessage.Message {
         EventMessage.Message(
@@ -131,7 +131,7 @@ struct MuteTests {
     }
 
     func mutedConfig() -> Config {
-        var c = Config(owner: Config.Owner(displayName: ownerName, upn: "michael@company.com", mri: ownerMRI))
+        var c = Config(owner: Config.Owner(displayName: ownerName, upn: "alex@company.com", mri: ownerMRI))
         c.muted = true
         return c
     }
@@ -143,7 +143,7 @@ struct MuteTests {
 
     @Test func mutedSkipsEvenLoudMention() {
         let m = message(mentions: [Mention(id: "0", mri: ownerMRI, mentionType: "person", displayName: ownerName)])
-        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: mutedConfig())
+        let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: mutedConfig())
         #expect(d == .skip(reason: "muted"))
     }
 
@@ -155,7 +155,7 @@ struct MuteTests {
     }
 
     @Test func legacyConfigDecodesUnmuted() throws {
-        let json = #"{"owner":{"displayName":"N","upn":"","mri":""},"loudSubstring":"BTAC","notifyOnEdit":false,"skipOwnMessages":true,"notifyTypes":["Text"]}"#
+        let json = #"{"owner":{"displayName":"N","upn":"","mri":""},"loudSubstring":"Watercooler","notifyOnEdit":false,"skipOwnMessages":true,"notifyTypes":["Text"]}"#
         let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         #expect(c.muted == false)
     }

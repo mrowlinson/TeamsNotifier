@@ -12,7 +12,7 @@ import Testing
 @Suite("Rules rename")
 struct RulesRenameTests {
     let ownerMRI = "8:orgid:11111111-2222-3333-4444-555555555555"
-    let ownerName = "Michael Rowlinson"
+    let ownerName = "Alex Rivera"
 
     func message(
         senderMRI: String? = "8:orgid:sender",
@@ -41,11 +41,12 @@ struct RulesRenameTests {
 
     /// Stock owner rules (post-rename ids), enabled throughout.
     func stockRules() -> [NotifyRule] {
-        NotifyRule.migrate(skipOwn: true, notifyOnEdit: false, types: ["Text", "RichText"], loud: "BTAC")
+        NotifyRule.migrate(skipOwn: true, notifyOnEdit: false, types: ["Text", "RichText"], loud: "Watercooler")
     }
 
     func config(rules: [NotifyRule]) -> Config {
         var c = Config.default
+        c.owner.displayName = ownerName
         c.notifyRules = rules
         c.rulesStored = true
         c.applyRules()
@@ -65,10 +66,10 @@ struct RulesRenameTests {
             (message(type: "ThreadActivity/MemberJoined"), false, "Alice"),
             (message(type: "Event/Call"), false, "Alice"),
             (message(), true, "Alice"),
-            (message(), false, "BTAC War Room"),
-            (message(mentions: [ownerMention()]), false, "BTAC War Room"),
-            (message(mentions: [nameOnlyOwnerMention()]), false, "BTAC War Room"),
-            (message(mentions: [channelMention()]), false, "BTAC War Room"),
+            (message(), false, "Watercooler Chat"),
+            (message(mentions: [ownerMention()]), false, "Watercooler Chat"),
+            (message(mentions: [nameOnlyOwnerMention()]), false, "Watercooler Chat"),
+            (message(mentions: [channelMention()]), false, "Watercooler Chat"),
         ]
         for (m, isEdit, chat) in cases {
             let da = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chat, ownerMRI: ownerMRI, config: a)
@@ -99,7 +100,7 @@ struct RulesRenameTests {
         {"kind":"skip-own","enabled":true},
         {"kind":"allow-types","value":"Text, RichText","enabled":true},
         {"kind":"skip-edits","enabled":false},
-        {"kind":"loud-chat","value":"BTAC","enabled":true}]}
+        {"kind":"loud-chat","value":"Watercooler","enabled":true}]}
         """
         let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
         #expect(c.rulesStored == true)
@@ -111,12 +112,12 @@ struct RulesRenameTests {
         // Payloads survive the remap.
         #expect(c.notifyRules[1].value == "Text, RichText")
         #expect(c.notifyRules[2].enabled == false)
-        #expect(c.notifyRules[3].value == "BTAC")
+        #expect(c.notifyRules[3].value == "Watercooler")
         // Scalars resolve from the remapped rules (edits rule off).
         #expect(c.skipOwnMessages == true)
         #expect(c.notifyOnEdit == true)
         #expect(c.notifyTypes == ["Text", "RichText"])
-        #expect(c.loudSubstring == "BTAC")
+        #expect(c.loudSubstring == "Watercooler")
         // New gates absent in an old file: ON (hardcoded pre-rules
         // behavior), not strict.
         #expect(c.noisyChannelMentions == true)
@@ -125,11 +126,12 @@ struct RulesRenameTests {
 
     @Test func oldKindsBehaviorIdenticalToCanonical() throws {
         let oldJSON = """
-        {"notifyRules":[
+        {"owner":{"displayName":"Alex Rivera","upn":"","mri":""},
+        "notifyRules":[
         {"kind":"skip-own","enabled":true},
         {"kind":"allow-types","value":"Text, RichText","enabled":true},
         {"kind":"skip-edits","enabled":true},
-        {"kind":"loud-chat","value":"BTAC","enabled":true},
+        {"kind":"loud-chat","value":"Watercooler","enabled":true},
         {"kind":"noisy-chats-channel-mentions","enabled":true},
         {"kind":"my-name-as-backup","enabled":true}]}
         """
@@ -142,13 +144,13 @@ struct RulesRenameTests {
     @Test func ownerFileShapeBehaviorUnchanged() throws {
         // Exact owner config shape (pre-rename ids, legacy scalars).
         let ownerJSON = """
-        {"owner":{"mri":"","displayName":"Michael Rowlinson","upn":""},
+        {"owner":{"mri":"","displayName":"Alex Rivera","upn":""},
         "notifyRules":[{"kind":"skip-own","value":"","enabled":true},
         {"kind":"allow-types","value":"Text, RichText","enabled":true},
         {"kind":"skip-edits","value":"","enabled":true},
-        {"kind":"loud-chat","value":"BTAC","enabled":true}],
+        {"kind":"loud-chat","value":"Watercooler","enabled":true}],
         "scheduleTZ":"America/New_York","skipOwnMessages":true,"muted":false,
-        "notifyOnEdit":false,"loudSubstring":"BTAC",
+        "notifyOnEdit":false,"loudSubstring":"Watercooler",
         "muteWindows":[{"days":[2,3,4,5,6],"enabled":true,"start":"16:40","end":"24:00"}],
         "notifyTypes":["Text","RichText"]}
         """
@@ -160,15 +162,16 @@ struct RulesRenameTests {
         ])
         #expect(loaded.skipOwnMessages == true)
         #expect(loaded.notifyOnEdit == false)
-        #expect(loaded.loudSubstring == "BTAC")
+        #expect(loaded.loudSubstring == "Watercooler")
         #expect(loaded.notifyTypes == ["Text", "RichText"])
         // Equivalent stock config decides identically throughout.
         var stock = Config.default
+        stock.owner.displayName = ownerName
         stock.notifyRules = [
             NotifyRule(kind: NotifyRule.skipMyMessages, enabled: true),
             NotifyRule(kind: NotifyRule.messageTypes, value: "Text, RichText", enabled: true),
             NotifyRule(kind: NotifyRule.skipEdited, enabled: true),
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
         ]
         stock.rulesStored = true
         stock.applyRules()
@@ -182,14 +185,14 @@ struct RulesRenameTests {
             NotifyRule(kind: "skip-own", enabled: true),
             NotifyRule(kind: "allow-types", value: "Text", enabled: true),
             NotifyRule(kind: "skip-edits", enabled: true),
-            NotifyRule(kind: "loud-chat", value: "BTAC", enabled: true),
+            NotifyRule(kind: "loud-chat", value: "Watercooler", enabled: true),
         ]
         c.rulesStored = true
         c.applyRules()
         #expect(c.skipOwnMessages == true)
         #expect(c.notifyTypes == ["Text"])
         #expect(c.notifyOnEdit == false)
-        #expect(c.loudSubstring == "BTAC")
+        #expect(c.loudSubstring == "Watercooler")
         // Mixed old/new: first match still wins.
         var m = Config.default
         m.notifyRules = [
@@ -251,15 +254,15 @@ struct RulesRenameTests {
 
     @Test func noisyChatsGate() {
         let on = config(rules: [
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
             NotifyRule(kind: NotifyRule.noisyChannel, enabled: true),
             NotifyRule(kind: NotifyRule.nameBackup, enabled: true),
         ])
-        let off = config(rules: [NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: false)])
+        let off = config(rules: [NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: false)])
         let absent = config(rules: [])
-        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: on) == .skip(reason: "loud-no-mention"))
-        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: off) == .notify(reason: "chat-message"))
-        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: absent) == .notify(reason: "chat-message"))
+        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: on) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: off) == .notify(reason: "chat-message"))
+        #expect(ChatFilter.decide(message: message(), isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: absent) == .notify(reason: "chat-message"))
         // Blank value with the rule on still disables the match.
         let blank = config(rules: [NotifyRule(kind: NotifyRule.noisyChats, value: "  ", enabled: true)])
         #expect(blank.loudSubstring == "")
@@ -269,7 +272,7 @@ struct RulesRenameTests {
 
     @Test func noisyChannelGate() {
         func cfg(_ channel: NotifyRule?) -> Config {
-            var rules = [NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true)]
+            var rules = [NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true)]
             if let channel { rules.append(channel) }
             return config(rules: rules)
         }
@@ -280,18 +283,18 @@ struct RulesRenameTests {
         #expect(off.noisyChannelMentions == false)
         #expect(absent.noisyChannelMentions == true)
         let ch = message(mentions: [channelMention()])
-        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: on) == .notify(reason: "loud-channel-mention"))
-        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .skip(reason: "loud-no-mention"))
-        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: absent) == .notify(reason: "loud-channel-mention"))
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: on) == .notify(reason: "loud-channel-mention"))
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: off) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: absent) == .notify(reason: "loud-channel-mention"))
         // Direct owner mention still notifies with the channel gate off.
         let own = message(mentions: [ownerMention()])
-        #expect(ChatFilter.decide(message: own, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .notify(reason: "loud-owner-mention"))
+        #expect(ChatFilter.decide(message: own, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: off) == .notify(reason: "loud-owner-mention"))
     }
 
     @Test func nameBackupGateMentionSite() {
         func cfg(_ backup: NotifyRule?) -> Config {
             var rules = [
-                NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+                NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
                 NotifyRule(kind: NotifyRule.noisyChannel, enabled: true),
             ]
             if let backup { rules.append(backup) }
@@ -301,12 +304,12 @@ struct RulesRenameTests {
         let off = cfg(NotifyRule(kind: NotifyRule.nameBackup, enabled: false))
         let absent = cfg(nil)
         let named = message(mentions: [nameOnlyOwnerMention()])
-        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: on) == .notify(reason: "loud-owner-mention"))
-        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .skip(reason: "loud-no-mention"))
-        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: absent) == .notify(reason: "loud-owner-mention"))
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: on) == .notify(reason: "loud-owner-mention"))
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: off) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: absent) == .notify(reason: "loud-owner-mention"))
         // MRI mention still notifies with the backup off (IDs only).
         let mri = message(mentions: [ownerMention()])
-        #expect(ChatFilter.decide(message: mri, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: off) == .notify(reason: "loud-owner-mention"))
+        #expect(ChatFilter.decide(message: mri, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: off) == .notify(reason: "loud-owner-mention"))
     }
 
     @Test func nameBackupGateOwnMessageSite() {
@@ -354,7 +357,7 @@ struct RulesRenameTests {
         #expect(blank.matchByDisplayName == true)
         #expect(blank.loudSubstring == "")
         for m in [message(mentions: [nameOnlyOwnerMention()]), message(mentions: [channelMention()])] {
-            let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: blank)
+            let d = ChatFilter.decide(message: m, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: blank)
             #expect(d == .notify(reason: "chat-message"))
         }
         let own = message(senderMRI: nil, senderName: ownerName)
@@ -369,13 +372,13 @@ struct RulesRenameTests {
     /// gates hardcoded on, scalars set directly without applyRules).
     @Test func ownerFourRuleFileKeepsHardcodedGates() throws {
         let ownerJSON = """
-        {"owner":{"mri":"","displayName":"Michael Rowlinson","upn":""},
+        {"owner":{"mri":"","displayName":"Alex Rivera","upn":""},
         "notifyRules":[{"kind":"skip-own","value":"","enabled":true},
         {"kind":"allow-types","value":"Text, RichText","enabled":true},
         {"kind":"skip-edits","value":"","enabled":true},
-        {"kind":"loud-chat","value":"BTAC","enabled":true}],
+        {"kind":"loud-chat","value":"Watercooler","enabled":true}],
         "scheduleTZ":"America/New_York","skipOwnMessages":true,"muted":false,
-        "notifyOnEdit":false,"loudSubstring":"BTAC",
+        "notifyOnEdit":false,"loudSubstring":"Watercooler",
         "muteWindows":[{"days":[2,3,4,5,6],"enabled":true,"start":"16:40","end":"24:00"}],
         "notifyTypes":["Text","RichText"]}
         """
@@ -384,19 +387,20 @@ struct RulesRenameTests {
         #expect(loaded.matchByDisplayName == true)
         // Pre-rename hardcoded behavior: same scalars, both gates on.
         var hard = Config.default
+        hard.owner.displayName = ownerName
         hard.skipOwnMessages = true
         hard.notifyOnEdit = false
         hard.notifyTypes = ["Text", "RichText"]
-        hard.loudSubstring = "BTAC"
+        hard.loudSubstring = "Watercooler"
         hard.noisyChannelMentions = true
         hard.matchByDisplayName = true
         expectSameDecisions(loaded, hard)
         // Spot checks: channel mention in a noisy chat notifies, and
         // the display-name backup matches at both call sites.
         let ch = message(mentions: [channelMention()])
-        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: loaded) == .notify(reason: "loud-channel-mention"))
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: loaded) == .notify(reason: "loud-channel-mention"))
         let named = message(mentions: [nameOnlyOwnerMention()])
-        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC War Room", ownerMRI: ownerMRI, config: loaded) == .notify(reason: "loud-owner-mention"))
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "Watercooler Chat", ownerMRI: ownerMRI, config: loaded) == .notify(reason: "loud-owner-mention"))
         let nameless = message(senderMRI: nil, senderName: ownerName)
         #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: loaded) == .skip(reason: "own-message"))
     }
@@ -408,16 +412,16 @@ struct RulesRenameTests {
             NotifyRule(kind: NotifyRule.skipMyMessages, enabled: true),
             NotifyRule(kind: NotifyRule.messageTypes, value: "Text, RichText", enabled: true),
             NotifyRule(kind: NotifyRule.skipEdited, enabled: true),
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: true),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: true),
             NotifyRule(kind: NotifyRule.noisyChannel, enabled: false),
             NotifyRule(kind: NotifyRule.nameBackup, enabled: false),
         ])
         #expect(c.noisyChannelMentions == false)
         #expect(c.matchByDisplayName == false)
         let ch = message(mentions: [channelMention()])
-        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: c) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: ch, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: c) == .skip(reason: "loud-no-mention"))
         let named = message(mentions: [nameOnlyOwnerMention()])
-        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: c) == .skip(reason: "loud-no-mention"))
+        #expect(ChatFilter.decide(message: named, isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: c) == .skip(reason: "loud-no-mention"))
         let nameless = message(senderMRI: nil, senderName: ownerName)
         #expect(ChatFilter.decide(message: nameless, isEdit: false, chatDisplayName: "Alice", ownerMRI: nil, config: c) == .notify(reason: "chat-message"))
     }
@@ -436,10 +440,10 @@ struct RulesRenameTests {
             (message(senderMRI: nil, senderName: ownerName), false, "Alice"),
             (message(type: "Control/Typing"), false, "Alice"),
             (message(), true, "Alice"),
-            (message(), false, "BTAC War Room"),
-            (message(mentions: [ownerMention()]), false, "BTAC War Room"),
-            (message(mentions: [nameOnlyOwnerMention()]), false, "BTAC War Room"),
-            (message(mentions: [channelMention()]), false, "BTAC War Room"),
+            (message(), false, "Watercooler Chat"),
+            (message(mentions: [ownerMention()]), false, "Watercooler Chat"),
+            (message(mentions: [nameOnlyOwnerMention()]), false, "Watercooler Chat"),
+            (message(mentions: [channelMention()]), false, "Watercooler Chat"),
         ]
         for (m, isEdit, chat) in cases {
             let d = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chat, ownerMRI: ownerMRI, config: blank)
@@ -463,7 +467,7 @@ struct RulesRenameTests {
         #expect(NotifyRule.valueLabel(for: NotifyRule.skipMyMessages) == "Value:")
         #expect(NotifyRule.valueLabel(for: "custom") == "Value:")
         #expect(NotifyRule.valuePlaceholder(for: NotifyRule.messageTypes) == "Text, RichText")
-        #expect(NotifyRule.valuePlaceholder(for: NotifyRule.noisyChats) == "BTAC")
+        #expect(NotifyRule.valuePlaceholder(for: NotifyRule.noisyChats) == "Watercooler")
         #expect(NotifyRule.valuePlaceholder(for: NotifyRule.skipEdited) == "(ignored)")
         #expect(NotifyRule.usesValue(NotifyRule.messageTypes))
         #expect(NotifyRule.usesValue(NotifyRule.noisyChats))

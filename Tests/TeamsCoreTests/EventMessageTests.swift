@@ -87,8 +87,8 @@ struct EventMessageTests {
 
     @Test func threadTopicCarried() {
         let obj: [String: Any] = ["type": "EventMessage", "resourceType": "NewMessage",
-                                  "resource": resource(overrides: ["threadtopic": "BTAC War Room"])]
-        #expect(EventMessage.parse(obj)?.message.threadTopic == "BTAC War Room")
+                                  "resource": resource(overrides: ["threadtopic": "Watercooler Chat"])]
+        #expect(EventMessage.parse(obj)?.message.threadTopic == "Watercooler Chat")
     }
 
     @Test func mentionsParsedFromProperties() {

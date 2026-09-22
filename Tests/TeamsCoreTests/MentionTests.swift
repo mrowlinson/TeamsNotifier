@@ -4,7 +4,7 @@ import Testing
 @Suite("Mentions")
 struct MentionTests {
     let ownerMRI = "8:orgid:11111111-2222-3333-4444-555555555555"
-    let ownerName = "Michael Rowlinson"
+    let ownerName = "Alex Rivera"
 
     // MARK: properties-array shapes
 
@@ -98,7 +98,7 @@ struct MentionTests {
     }
 
     @Test func nameFallbackWhenNoMRI() {
-        let ms = [Mention(id: "0", mri: nil, displayName: "  michael rowlinson ")]
+        let ms = [Mention(id: "0", mri: nil, displayName: "  alex rivera ")]
         #expect(Mentions.mentionsOwner(ms, ownerMRI: ownerMRI, ownerDisplayName: ownerName))
         #expect(Mentions.mentionsOwner(ms, ownerMRI: nil, ownerDisplayName: ownerName))
     }

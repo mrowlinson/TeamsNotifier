@@ -7,7 +7,7 @@ import Testing
 @Suite("Notify rules")
 struct NotifyRulesTests {
     let ownerMRI = "8:orgid:11111111-2222-3333-4444-555555555555"
-    let ownerName = "Michael Rowlinson"
+    let ownerName = "Alex Rivera"
 
     func message(
         senderMRI: String? = "8:orgid:sender",
@@ -31,8 +31,8 @@ struct NotifyRulesTests {
             (message(senderMRI: ownerMRI, senderName: ownerName), false, "Alice"),
             (message(type: "Control/Typing"), false, "Alice"),
             (message(), true, "Alice"),
-            (message(), false, "BTAC War Room"),
-            (message(mentions: ownerMention), false, "BTAC War Room"),
+            (message(), false, "Watercooler Chat"),
+            (message(mentions: ownerMention), false, "Watercooler Chat"),
             (message(type: "Text"), false, "Alice"),
         ]
         for (m, isEdit, chat) in cases {
@@ -84,8 +84,9 @@ struct NotifyRulesTests {
     // MARK: (a) existing-install preservation
 
     @Test func legacyDefaultsMigrateToStockRules() throws {
-        // {} decodes with legacy defaults; migration must encode exactly
-        // those, and decisions must match a stock Config() throughout.
+        // {} decodes with generic defaults; migration must fill the
+        // legacy values, and decisions must match an explicit legacy
+        // config (stock Config() no longer carries them) throughout.
         let migrated = try JSONDecoder().decode(Config.self, from: Data("{}".utf8))
         #expect(migrated.didMigrateRules == true)
         #expect(migrated.rulesStored == false)
@@ -97,7 +98,9 @@ struct NotifyRulesTests {
         #expect(loudValue == "BTAC")
         let typesValue = migrated.notifyRules.first(where: { $0.kind == NotifyRule.messageTypes })?.value
         #expect(typesValue == "Text, RichText")
-        expectSameDecisions(migrated, Config())
+        var legacy = Config()
+        legacy.loudSubstring = Config.Legacy.loudSubstring
+        expectSameDecisions(migrated, legacy)
     }
 
     @Test func legacyCustomScalarsPreservedExactly() throws {
@@ -151,7 +154,7 @@ struct NotifyRulesTests {
 
     @Test func customKindRoundTripsUntouched() throws {
         var c = Config.default
-        c.notifyRules = NotifyRule.migrate(skipOwn: true, notifyOnEdit: false, types: ["Text", "RichText"], loud: "BTAC")
+        c.notifyRules = NotifyRule.migrate(skipOwn: true, notifyOnEdit: false, types: ["Text", "RichText"], loud: "Watercooler")
         c.notifyRules.append(NotifyRule(kind: "my-future-rule", value: "x=1", enabled: false))
         c.rulesStored = true
         c.applyRules()
@@ -172,7 +175,7 @@ struct NotifyRulesTests {
         var c = Config.default
         c.notifyRules = [
             NotifyRule(kind: NotifyRule.skipMyMessages, enabled: false),
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: false),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: false),
         ]
         c.rulesStored = true
         c.applyRules()
@@ -201,7 +204,7 @@ struct NotifyRulesTests {
             (message(senderMRI: ownerMRI, senderName: ownerName), false, "Alice"),
             (message(), true, "Alice"),
             (message(type: "Control/Typing"), false, "Alice"),
-            (message(), false, "BTAC War Room"),
+            (message(), false, "Watercooler Chat"),
         ]
         for (m, isEdit, chat) in cases {
             let d = ChatFilter.decide(message: m, isEdit: isEdit, chatDisplayName: chat, ownerMRI: ownerMRI, config: c)
@@ -215,7 +218,7 @@ struct NotifyRulesTests {
             NotifyRule(kind: NotifyRule.skipMyMessages, enabled: false),
             NotifyRule(kind: NotifyRule.messageTypes, value: "Text, RichText", enabled: false),
             NotifyRule(kind: NotifyRule.skipEdited, enabled: false),
-            NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC", enabled: false),
+            NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler", enabled: false),
             NotifyRule(kind: NotifyRule.noisyChannel, enabled: false),
             NotifyRule(kind: NotifyRule.nameBackup, enabled: false),
         ]
@@ -235,7 +238,7 @@ struct NotifyRulesTests {
             message: message(type: "Control/Typing"), isEdit: false, chatDisplayName: "Alice", ownerMRI: ownerMRI, config: base)
         #expect(ctrl == .notify(reason: "chat-message"))
         let loud = ChatFilter.decide(
-            message: message(), isEdit: false, chatDisplayName: "BTAC", ownerMRI: ownerMRI, config: base)
+            message: message(), isEdit: false, chatDisplayName: "Watercooler", ownerMRI: ownerMRI, config: base)
         #expect(loud == .notify(reason: "chat-message"))
     }
 
@@ -275,7 +278,7 @@ struct NotifyRulesTests {
         #expect(NotifyRule(kind: NotifyRule.skipMyMessages).isValid)
         #expect(NotifyRule(kind: NotifyRule.skipEdited).isValid)
         #expect(NotifyRule(kind: NotifyRule.messageTypes, value: "Text").isValid)
-        #expect(NotifyRule(kind: NotifyRule.noisyChats, value: "BTAC").isValid)
+        #expect(NotifyRule(kind: NotifyRule.noisyChats, value: "Watercooler").isValid)
         #expect(NotifyRule(kind: NotifyRule.noisyChannel).isValid)
         #expect(NotifyRule(kind: NotifyRule.nameBackup).isValid)
         #expect(NotifyRule(kind: NotifyRule.keywordAllow, value: "outage, urgent").isValid)
@@ -322,7 +325,7 @@ struct NotifyRulesTests {
         #expect(c.notifyRules == [NotifyRule(kind: "skip-my-own-messages", value: "", enabled: true)])
     }
 
-    @Test func migratedScalarsMatchLegacyFills() throws {
+    @Test func migratedScalarsMatchLegacyValues() throws {
         // Legacy blanks filled exactly like Config.load did: loud "" ->
         // BTAC, types [] -> Text/RichText (in the migrated rules).
         let json = #"{"loudSubstring":"","notifyTypes":[]}"#

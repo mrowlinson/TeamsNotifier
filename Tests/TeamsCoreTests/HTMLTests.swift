@@ -25,8 +25,8 @@ struct HTMLTests {
     }
 
     @Test func mentionSpanStripsToName() {
-        let html = #"<span itemtype="http://schema.skype.com/Mention" itemscope itemid="0">Michael Rowlinson</span> hi"#
-        #expect(HTML.strip(html) == "Michael Rowlinson hi")
+        let html = #"<span itemtype="http://schema.skype.com/Mention" itemscope itemid="0">Alex Rivera</span> hi"#
+        #expect(HTML.strip(html) == "Alex Rivera hi")
     }
 
     @Test func trimsWhitespace() {

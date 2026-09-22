@@ -10,13 +10,27 @@ unreliable; this is a 652KB single binary idling at ~12MB footprint.
 
 ## Status
 
-Parsers, filter, framing, auth plumbing, device-code flow, and
-notifications are built and unit-tested (190 tests green). Live auth +
-realtime against the owner's
-work tenant is **not yet validated** — owner runs Setup below and reports
-back. Internal Teams APIs can drift; failures are loud (see Limits).
+Beta. Parsers, filter, framing, auth plumbing, device-code flow, and
+notifications are built and unit-tested (282 tests green). It signs in
+against real work tenants today, but it rides undocumented Teams APIs
+that Microsoft can change without notice; failures are loud (see
+Limits). If something breaks, a log excerpt plus the fault line is
+usually enough to diagnose.
 
-## Setup (owner steps)
+## Screenshots
+
+<!-- TODO: capture on a clean install and drop under docs/. -->
+<!-- ![Menu bar status](docs/menu.png) -->
+<!-- ![Notification banner with inline Reply](docs/notification.png) -->
+<!-- ![Rules editor](docs/rules.png) -->
+<!-- ![Schedule editor](docs/schedule.png) -->
+
+Placeholders until captures land: menu-bar `TN` status (`connected`,
+`Muted · schedule`, …), a notification banner with inline Reply,
+the rules editor (goal picker + readable rows), the schedule editor
+(weekly mute windows table).
+
+## Setup
 
 1. Build + install:
    `Scripts/package.sh --install`
@@ -37,14 +51,15 @@ back. Internal Teams APIs can drift; failures are loud (see Limits).
    per reply, zero idle cost). Success is silent (debug log); failure
    posts "Reply failed: <reason>". Replies work while muted (mute gates
    inbound notifications only).
-6. Optional config `~/.config/teamsnotifier/config.json`:
+6. Optional config `~/.config/teamsnotifier/config.json` (tolerant
+   decode: any missing key falls back to its default):
    ```json
-   {"owner":{"displayName":"Michael Rowlinson","upn":"you@company.com","mri":""},
-    "loudSubstring":"BTAC","notifyOnEdit":false,"skipOwnMessages":true,
-    "notifyTypes":["Text","RichText"]}
+   {"owner":{"displayName":"Alex Rivera","upn":"alex@company.com","mri":""}}
    ```
    `upn` enables a wrong-account warning. `mri` is auto-learned from the
-   sign-in token when empty (preferred mention signal).
+   sign-in token when empty (preferred mention signal). Rules and the
+   mute schedule live in the same file but are managed through the
+   GUI (menu `Edit rules…` / `Edit schedule…`).
 7. Optional start-at-login: `Scripts/install-launch-agent.sh`
    (logs to `/tmp/teamsnotifier.log`).
 
@@ -58,12 +73,31 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
 `--sign-in`, `--sign-out`, `--offline` (menu only, no network),
 `--auth device|loopback` (default device), `--help`.
 
+## Fresh-install behavior
+
+A fresh install notifies for everything and mutes nothing:
+
+- Blank rules list: every message notifies (own messages, edits,
+  typing indicators included — the list decides what to quiet).
+- Empty mute schedule: never muted by schedule.
+- Noisy-chat matching off (no chat text configured).
+- Owner identity empty until sign-in learns the MRI/UPN from the
+  token (display name stays empty unless set via config or `--owner`;
+  mention matching falls back to IDs only).
+
+To quiet down: menu `Edit rules…` → Add → "Quiet down noisy chats"
+(starter text `Watercooler` — replace with part of the chat name),
+and `Edit schedule…` → Add windows such as weeknights + weekends.
+Upgrading a config written before the public release? Its exact
+effective values (schedule, rules, fills) migrate into the file on
+first load, automatically.
+
 ## Knobs
 
-- `loudSubstring` (default `BTAC`): chats whose display name contains it
-  (case-insensitive) notify ONLY on owner mention (MRI match preferred,
-  display-name fallback) or channel/Everyone mention. All other chats
-  always notify. Empty string disables the rule.
+- Noisy chats (default off): chats whose display name contains the
+  configured text (case-insensitive) notify ONLY on your mention (MRI
+  match preferred, display-name fallback) or channel/Everyone mention.
+  All other chats always notify. Empty text disables the rule.
 - `notifyTypes`: messagetype heads that notify (`Text`, `RichText`).
   Typing indicators, member-join activity, calls never notify.
 - `notifyOnEdit` (default false): also notify on MessageUpdate edits.
@@ -73,7 +107,9 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
   store behind the filters above — `skip-my-own-messages`,
   `only-these-message-types` (value e.g. `Text, RichText`),
   `skip-edited-messages`, `noisy-chats-mention-only` (value = chat-name
-  text), `noisy-chats-channel-mentions`, `my-name-as-backup`.
+  text), `noisy-chats-channel-mentions`, `my-name-as-backup`,
+  `always-notify-keywords` / `never-notify-keywords` (comma- or
+  line-separated words; block beats allow; both yield to mute).
   Pre-rename ids (`skip-own`, `allow-types`, `skip-edits`, `loud-chat`)
   still load (mapped on decode). Fresh installs keep a blank list
   (everything notifies); unknown kinds round-trip unenforced.
@@ -85,7 +121,7 @@ Useful flags: `--verbose` (debug to stderr), `--notify-test`,
   Sun=1; each entry also takes `enabled`), `scheduleTZ` (default
   `America/New_York`). Fresh installs start with an EMPTY schedule
   (never muted); configs that predate stored schedules migrate the
-  owner's entries (muted Mon–Fri 00:00–07:50 + 16:40–24:00 ET + all day
+  legacy entries (muted Mon–Fri 00:00–07:50 + 16:40–24:00 ET + all day
   Sat/Sun) to the file on first load. Empty `muteWindows` disables
   scheduled mute. A manual Mute-toggle during a window holds until
   the next schedule boundary, then the schedule resumes; toggles are
@@ -100,8 +136,8 @@ object per line: `timestamp`, `sender`, `chat`, `threadID`, `text`).
 Menu `Show history` opens it in the default viewer. Notified only:
 muted and filter-suppressed messages (noisy-chat no-mention, own/type/
 edit skips) are never recorded. Retention: newest 10k entries + 30 days,
-pruned on launch and daily. NOTE: plaintext on disk (owner acknowledged)
-— anyone with file access can read past message text.
+pruned on launch and daily. NOTE: plaintext on disk — anyone with file
+access can read past message text.
 
 ## How it works
 
@@ -147,14 +183,16 @@ headers for exact endpoint/scope provenance.
   Failures are loud: `FAULT` lines in stderr/log, menu status shows
   retry state, auth death posts a notification and reopens sign-in.
 - ToS gray area: read-only access to your own data via internal APIs,
-  same as the referenced OSS clients. Owner's call.
-- Live path (sign-in, trouter events, chat REST, notification delivery
-  from installed bundle) validated by owner, not by the agent.
-- Direct-binary launch showed a notification-auth refusal in testing;
-  install to /Applications and launch via Finder/`open` before judging.
+  same as the referenced OSS clients. Your call.
 - Channel vs group-chat threading: notification titles use the chat
   topic when Teams provides one, else member name, else thread id.
 - Replies post a plain message to the thread (not a threaded quote under
   the triggering message). 1:1 + group chats proven by refs; channel
   threads use the same endpoint (no channel-specific send in any ref)
   but are live-untested — a rejection surfaces as "Reply failed".
+- Direct-binary launch showed a notification-auth refusal in testing;
+  install to /Applications and launch via Finder/`open` before judging.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

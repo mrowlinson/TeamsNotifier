@@ -4,9 +4,9 @@ import Foundation
 /// --config). CLI flags override file values. Defaults in Config.defaults.
 public struct Config: Codable, Sendable {
     public struct Owner: Codable, Sendable {
-        /// Display name, e.g. "Michael Rowlinson". Fallback mention signal.
+        /// Display name, e.g. "Alex Morgan". Fallback mention signal.
         public var displayName: String
-        /// Work UPN, e.g. "michael@company.com". Matched against token claims.
+        /// Work UPN, e.g. "alex@company.com". Matched against token claims.
         public var upn: String
         /// Owner Skype MRI (8:orgid:{oid}). Preferred mention signal.
         /// Auto-learned from the AAD token on sign-in when empty.
@@ -19,9 +19,21 @@ public struct Config: Codable, Sendable {
         }
     }
 
+    /// Pre-public hardcoded fills (the original install's values). Used
+    /// ONLY as a migration source for configs/installs that predate the
+    /// stored keys — never for fresh installs, which use the
+    /// generic/empty Config.default. Values stay exact so upgrades
+    /// preserve the original install's behavior.
+    public enum Legacy {
+        public static let ownerDisplayName = "Michael Rowlinson"
+        public static let loudSubstring = "BTAC"
+        public static let notifyTypes = ["Text", "RichText"]
+    }
+
     public var owner: Owner
     /// Case-insensitive substring; matching chats only notify on owner or
-    /// channel/Everyone mention. Default "BTAC".
+    /// channel/Everyone mention. Default "" (rule off). Pre-public
+    /// installs migrate the legacy value (see Legacy) on first load.
     public var loudSubstring: String
     /// Notify on MessageUpdate edits. Default false.
     public var notifyOnEdit: Bool
@@ -86,7 +98,7 @@ public struct Config: Codable, Sendable {
 
     public init(
         owner: Owner = Owner(),
-        loudSubstring: String = "BTAC",
+        loudSubstring: String = "",
         notifyOnEdit: Bool = false,
         skipOwnMessages: Bool = true,
         noisyChannelMentions: Bool = true,
@@ -303,8 +315,11 @@ public struct Config: Codable, Sendable {
         return warnings
     }
 
+    /// Generic public defaults: empty owner, empty loud substring, empty
+    /// schedule and rules. Fresh installs build on this; pre-public
+    /// installs migrate their exact values from Legacy instead.
     public static var `default`: Config {
-        Config(owner: Owner(displayName: "Michael Rowlinson"))
+        Config()
     }
 
     public static var defaultPath: String {
@@ -312,21 +327,22 @@ public struct Config: Codable, Sendable {
     }
 
     /// Load from path; missing file yields a FRESH config with an empty
-    /// schedule (zero seeded entries) and BLANK rules, UNLESS
-    /// `existingInstall` is true (the app passes Keychain sign-in
-    /// presence: an owner who never created a config file but is signed
-    /// in is an existing install, not a fresh one). Missing-file +
-    /// existing install migrates the owner schedule + stock owner rules
-    /// and persists them (same didMigrate* + save pattern as legacy
-    /// files). An existing file whose JSON lacks the schedule/rules keys
-    /// migrates them AND persists them back to the store (best-effort: a
-    /// failed write keeps the file as it was while the in-memory values
-    /// are still migrated).
+    /// owner, empty loud substring, empty schedule (zero seeded entries)
+    /// and BLANK rules, UNLESS `existingInstall` is true (the app passes
+    /// Keychain sign-in presence: a user who never created a config file
+    /// but is signed in is an existing install, not a fresh one).
+    /// Missing-file + existing install migrates the legacy fills
+    /// (Legacy + owner schedule + stock rules) and persists them (same
+    /// didMigrate* + save pattern as legacy files). An existing file
+    /// whose JSON lacks the schedule/rules keys migrates them AND
+    /// persists them back to the store (best-effort: a failed write keeps
+    /// the file as it was while the in-memory values are still migrated).
     public static func load(from path: String, existingInstall: Bool = false) throws -> Config {
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: url.path) else {
             if existingInstall {
                 var migrated = Config.default
+                migrated.owner.displayName = Legacy.ownerDisplayName
                 migrated.muteWindows = MuteWindow.ownerSchedule
                 migrated.didMigrateSchedule = true
                 migrated.notifyRules = NotifyRule.migrate(
@@ -349,13 +365,13 @@ public struct Config: Codable, Sendable {
         }
         let data = try Data(contentsOf: url)
         var cfg = try JSONDecoder().decode(Config.self, from: data)
-        if cfg.owner.displayName.isEmpty { cfg.owner.displayName = Config.default.owner.displayName }
+        if cfg.owner.displayName.isEmpty { cfg.owner.displayName = Legacy.ownerDisplayName }
         // Legacy fills only when the rules key is absent: with stored
         // rules the scalars already reflect the list (a blank loud there
         // is a deliberate gate-off, not a gap to re-seed).
         if !cfg.rulesStored {
-            if cfg.loudSubstring.isEmpty { cfg.loudSubstring = "BTAC" }
-            if cfg.notifyTypes.isEmpty { cfg.notifyTypes = ["Text", "RichText"] }
+            if cfg.loudSubstring.isEmpty { cfg.loudSubstring = Legacy.loudSubstring }
+            if cfg.notifyTypes.isEmpty { cfg.notifyTypes = Legacy.notifyTypes }
         }
         if cfg.didMigrateSchedule || cfg.didMigrateRules {
             try? cfg.save(to: path)
