@@ -17,6 +17,23 @@ that Microsoft can change without notice; failures are loud (see
 Limits). If something breaks, a log excerpt plus the fault line is
 usually enough to diagnose.
 
+## Features
+
+- Native macOS notifications for Teams 1:1, group, and channel chats.
+- Inline reply from the banner (one HTTPS POST per reply, zero idle
+  cost); replies work while muted.
+- Rules engine with a plain-words GUI editor (menu `Edit rules…`):
+  skip own messages, message-type allowlist, skip edits, noisy-chat
+  mention-only, channel-mention passthrough, display-name backup
+  matching, always/never keyword lists.
+- Weekly scheduled mute with a GUI editor (menu `Edit schedule…`),
+  per-entry on/off, manual override that holds until the next
+  schedule boundary.
+- Message history viewer (menu `Show history`): every notified
+  message, newest 10k entries + 30 days retention.
+- Device-code sign-in (no app registration, no redirect URI, no admin
+  consent); refresh token in Keychain, nothing else on disk.
+
 ## Screenshots
 
 <!-- TODO: capture on a clean install and drop under docs/. -->
@@ -29,6 +46,13 @@ Placeholders until captures land: menu-bar `TN` status (`connected`,
 `Muted · schedule`, …), a notification banner with inline Reply,
 the rules editor (goal picker + readable rows), the schedule editor
 (weekly mute windows table).
+
+## Requirements
+
+- macOS 14+ (Sonoma or later).
+- To build: Swift 6 toolchain (Xcode 16+ or Command Line Tools).
+- A Microsoft work account that can use Teams (device-code sign-in
+  handles MFA/conditional access).
 
 ## Setup
 
