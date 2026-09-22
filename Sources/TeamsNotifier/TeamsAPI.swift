@@ -26,6 +26,11 @@ public actor TeamsAPI {
     private let auth: AuthManager
     private let session: URLSession
     private var nameCache: [String: String] = [:]
+    /// Per-chat Teams mute (conversation `properties.alerts` == false).
+    /// TTL'd, unlike the name cache: mute flips in the Teams client take
+    /// effect here within minutes, without a restart.
+    private var mutedCache: [String: (muted: Bool, at: Date)] = [:]
+    private static let muteTTLSeconds: TimeInterval = 300
 
     public init(auth: AuthManager) {
         self.auth = auth
@@ -41,12 +46,37 @@ public actor TeamsAPI {
         if let t = threadTopic, !t.isEmpty { return t }
         if let cached = nameCache[chatID] { return cached }
         do {
-            let name = try await fetchConversationName(chatID: chatID)
-            nameCache[chatID] = name
-            return name
+            let info = try await fetchConversation(chatID: chatID)
+            nameCache[chatID] = info.name
+            mutedCache[chatID] = (info.muted, Date())
+            return info.name
         } catch {
             Log.fault("chat name resolve failed for \(chatID): \(error)")
             return chatID
+        }
+    }
+
+    /// True when the chat is muted in the Teams client (conversation
+    /// `properties.alerts` == false; see ConversationMute). Cache-first
+    /// with a 5-minute TTL; the fetch piggybacks the name fetch (same
+    /// GET, one more parsed field), so steady-state cost is zero extra
+    /// requests. Fail-open: errors mean NOT muted (never drop a
+    /// notification on a resolve failure).
+    public func isChatMuted(chatID: String) async -> Bool {
+        if let hit = mutedCache[chatID], Date().timeIntervalSince(hit.at) < Self.muteTTLSeconds {
+            return hit.muted
+        }
+        do {
+            let info = try await fetchConversation(chatID: chatID)
+            if let hit = mutedCache[chatID], hit.muted != info.muted {
+                Log.info("teams mute changed for \(chatID): \(hit.muted) -> \(info.muted)")
+            }
+            mutedCache[chatID] = (info.muted, Date())
+            nameCache[chatID] = info.name
+            return info.muted
+        } catch {
+            Log.fault("chat mute resolve failed for \(chatID): \(error)")
+            return false
         }
     }
 
@@ -88,7 +118,7 @@ public actor TeamsAPI {
     /// Inline reply: POST one message to a thread (ReplyPayload provenance).
     /// Same skype token + base as chat REST (no new auth). Any 2xx = sent
     /// (refs see 201 Created). 401 refreshes the skype token once + retries,
-    /// mirroring fetchConversationName.
+    /// mirroring fetchConversation.
     public func sendReply(chatID: String, text: String) async throws {
         let payload = ReplyPayload.build(text: text, clientMessageID: ReplyPayload.clientMessageID())
         let body = try JSONSerialization.data(withJSONObject: payload)
@@ -120,20 +150,20 @@ public actor TeamsAPI {
         }
     }
 
-    private func fetchConversationName(chatID: String) async throws -> String {
+    private func fetchConversation(chatID: String) async throws -> (name: String, muted: Bool) {
         let creds = try await auth.ensureSkypeCredentials()
         let encoded = chatID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? chatID
         let url = URL(string: "\(creds.chatServiceBase)/v1/users/ME/conversations/\(encoded)")!
         do {
-            return try await getName(url: url, skypeToken: creds.skypeToken, chatID: chatID)
+            return try await getConversation(url: url, skypeToken: creds.skypeToken, chatID: chatID)
         } catch APIError.http(401, _) {
             Log.info("chat REST 401, refreshing skype token once")
             let fresh = try await auth.refreshSkypeCredentials()
-            return try await getName(url: url, skypeToken: fresh.skypeToken, chatID: chatID)
+            return try await getConversation(url: url, skypeToken: fresh.skypeToken, chatID: chatID)
         }
     }
 
-    private func getName(url: URL, skypeToken: String, chatID: String) async throws -> String {
+    private func getConversation(url: URL, skypeToken: String, chatID: String) async throws -> (name: String, muted: Bool) {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("skypetoken=\(skypeToken)", forHTTPHeaderField: "Authentication")
@@ -146,19 +176,20 @@ public actor TeamsAPI {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw APIError.network("non-JSON conversation response")
         }
+        let muted = ConversationMute.isMuted(obj)
         // Topic shapes: top-level "topic" or threadProperties.topic.
-        if let t = obj["topic"] as? String, !t.isEmpty { return t }
+        if let t = obj["topic"] as? String, !t.isEmpty { return (t, muted) }
         if let props = obj["threadProperties"] as? [String: Any],
-           let t = props["topic"] as? String, !t.isEmpty { return t }
+           let t = props["topic"] as? String, !t.isEmpty { return (t, muted) }
         // 1:1 chats: first member display name that is not empty.
         if let members = obj["members"] as? [[String: Any]] {
             for m in members {
                 if let n = (m["displayName"] as? String) ?? (m["displayname"] as? String), !n.isEmpty {
-                    return n
+                    return (n, muted)
                 }
             }
         }
         Log.debug("conversation \(chatID) has no topic/members, using id")
-        return chatID
+        return (chatID, muted)
     }
 }
