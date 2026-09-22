@@ -9,8 +9,8 @@ import TeamsCore
 final class HistoryWindowController: NSWindowController {
     private static var shared: HistoryWindowController?
 
-    /// Show the window, creating it on first use. Reuses codec
-    /// (MessageHistory.parse) for load; activates the app so the
+    /// Show the window, creating it on first use. Reuses
+    /// HistoryStore.readAll for load; activates the app so the
     /// window is visible despite LSUIElement.
     static func show() {
         if shared == nil {
@@ -168,8 +168,7 @@ final class HistoryWindowController: NSWindowController {
     /// on every poll tick that sees a new mtime.
     private func reload() {
         let url = HistoryStore.historyFileURL
-        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        allRecords = HistoryView.sortedNewestFirst(MessageHistory.parse(text))
+        allRecords = HistoryView.sortedNewestFirst(HistoryStore.readAll())
         lastMtime = mtime(of: url)
         applyFilter()
     }
