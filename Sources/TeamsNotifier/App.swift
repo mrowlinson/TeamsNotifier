@@ -16,6 +16,7 @@ struct Flags {
     var signIn = false
     var signOut = false
     var offline = false
+    var signinDemo = false
     var authMethod: AuthManager.AuthMethod = .device
     var help = false
 
@@ -35,6 +36,7 @@ struct Flags {
             case "--sign-in": f.signIn = true
             case "--sign-out": f.signOut = true
             case "--offline": f.offline = true
+            case "--signin-demo": f.signinDemo = true
             case "--auth":
                 i += 1
                 if i < args.count, let m = AuthManager.AuthMethod(rawValue: args[i]) {
@@ -65,6 +67,7 @@ struct Flags {
       --sign-in       force interactive sign-in on launch
       --sign-out      clear Keychain tokens and exit
       --offline       menu bar only, no auth or connection (smoke test)
+      --signin-demo   sign-in window on a bundled DEMO stub, fully offline
       --auth M        sign-in transport: device (default) or loopback
       --help, -h      this text
     """
@@ -154,6 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let v = flags.loudSubstring { config.loudSubstring = v }
 
         Notifier.shared.setup()
+        // Sign-in banner tap: open/focus the window (message banners keep copy).
+        Notifier.shared.onSignInOpen = {
+            await MainActor.run { SignInWindowController.focusOrRestore() }
+        }
         HistoryStore.pruneIfNeeded()
         scheduleHistoryPruneTimer()
         setupMenu(status: "starting…")
@@ -191,6 +198,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await self?.handleNeedsSignIn(reason: reason) }
         }
 
+        if flags.signinDemo {
+            setStatus("sign-in demo (offline)")
+            Log.info("signin-demo mode: no auth, no connection")
+            await MainActor.run { SignInWindowController.showDemoPage() }
+            return
+        }
         if flags.offline {
             setStatus("offline (smoke test)")
             Log.info("offline mode: no auth, no connection")
@@ -343,6 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try await auth.signInInteractive(method: method)
+            SignInWindowController.closeOnSuccess()
             await auth.startKeepAlive()
             setStatus("signed in")
             Log.info("interactive sign-in ok (\(method))")
@@ -358,6 +372,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch AuthManager.AuthError.denied {
             setStatus("sign-in denied — Sign in to retry")
             Log.fault("device-code request declined; menu Sign in to retry")
+            SignInWindowController.showFailure(.denied) { [weak self] in
+                Task { await self?.interactiveSignIn() }
+            }
             Notifier.shared.postSystem(
                 title: "TeamsNotifier: sign-in denied",
                 body: "The request was declined. Use menu Sign in to retry."
@@ -365,6 +382,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch AuthManager.AuthError.expired {
             setStatus("sign-in expired — Sign in to retry")
             Log.fault("device code expired before approval; menu Sign in to retry")
+            SignInWindowController.showFailure(.expired) { [weak self] in
+                Task { await self?.interactiveSignIn() }
+            }
             Notifier.shared.postSystem(
                 title: "TeamsNotifier: sign-in code expired",
                 body: "The code timed out. Use menu Sign in to get a fresh one."
@@ -383,18 +403,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Device-code UX: code to clipboard, verification page in the default
-    /// browser, notification carrying code + URL. Menu shows waiting state.
+    /// Device-code UX: code to clipboard, verification page in the
+    /// in-app sign-in window, notification carrying code + URL (its tap
+    /// reopens the window). Menu shows waiting state.
     private func handleDeviceChallenge(_ c: DeviceCodeFlow.Challenge) async {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(c.userCode, forType: .string)
-        let openURL = c.verificationURIComplete ?? c.verificationURI
-        if let url = URL(string: openURL) {
-            NSWorkspace.shared.open(url)
-        }
         setStatus("waiting for sign-in…")
-        Notifier.shared.postSystem(
+        SignInWindowController.show(challenge: c) { [weak self] in
+            Task { await self?.interactiveSignIn() }
+        }
+        Notifier.shared.postSignIn(
             title: "Teams sign-in: enter code \(c.userCode)",
             body: "Code \(c.userCode) copied to clipboard — enter it at \(c.verificationURI)"
         )
@@ -464,6 +484,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Show history", action: #selector(menuShowHistory), keyEquivalent: ""))
         if flags.offline {
             menu.addItem(NSMenuItem(title: "Show demo chat", action: #selector(menuShowDemoChat), keyEquivalent: ""))
+        }
+        if flags.signinDemo {
+            menu.addItem(NSMenuItem(title: "Show demo sign-in", action: #selector(menuShowDemoSignIn), keyEquivalent: ""))
         }
         menu.addItem(NSMenuItem(title: "Copy diagnostics", action: #selector(menuCopyDiagnostics), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(menuQuit), keyEquivalent: "q"))
@@ -646,7 +669,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuSignIn() {
-        Task { await interactiveSignIn() }
+        // Same flow as a fresh challenge: focus the open window when one
+        // shows, else start (or restart) interactive sign-in. Demo stays
+        // fully offline: Sign in just (re)opens the stub page.
+        if flags.signinDemo {
+            SignInWindowController.showDemoPage()
+            return
+        }
+        if SignInWindowController.isShowing {
+            SignInWindowController.focus()
+        } else {
+            Task { await interactiveSignIn() }
+        }
     }
 
     @objc private func menuTest() {
@@ -663,6 +697,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuShowDemoChat() {
         ChatWindowController.showDemo()
+    }
+
+    @objc private func menuShowDemoSignIn() {
+        SignInWindowController.showDemoPage()
     }
 
     // MARK: History retention
