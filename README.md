@@ -47,8 +47,11 @@ usually enough to diagnose.
   plain JSONL elsewhere; legacy plain files read as-is and migrate
   once. Notified messages only; newest 10k entries + 30 days
   retention.
-- Device-code sign-in (no app registration, no redirect URI, no admin
-  consent); refresh token in Keychain, nothing else on disk.
+- Device-code sign-in in an in-app window (no app registration, no
+  redirect URI, no admin consent): prefilled Microsoft page, banner tap
+  reopens, auto-close on success, Retry on deny/expiry,
+  Open-in-browser fallback; refresh token in Keychain, nothing else
+  on disk.
 
 ## Screenshots
 
@@ -76,13 +79,15 @@ table), the history viewer (table + search + detail).
 1. Build + install:
    `Scripts/package.sh --install`
 2. Launch `/Applications/TeamsNotifier.app` (`TN` appears in menu bar).
-3. Sign-in is a device code (no redirect URI to register):
-   the app copies a code like `XXXX-XXXX` to the clipboard, opens
-   `microsoft.com/devicelogin` in the default browser, and posts a
-   notification with the code + URL. Paste/type the code, sign in with
-   the **work** account (interactive + MFA/CA fine), approve. Menu shows
-   `waiting for sign-in…`, then `connected`. No tokens touch disk except
-   the refresh token (Keychain, `com.teamsnotifier.tokens`).
+3. Sign-in is a device code (no redirect URI to register): a `Teams
+   sign-in` window opens on the prefilled Microsoft page — sign in
+   there with the **work** account (interactive + MFA/CA fine),
+   approve. The code (like `XXXX-XXXX`) is also on the clipboard; a
+   banner carries code + URL (tap reopens the window). Deny/expiry
+   lands inline with Retry; `Open in browser` falls back to the
+   system browser. Menu shows `waiting for sign-in…`, then
+   `connected`. No tokens touch disk except the refresh token
+   (Keychain, `com.teamsnotifier.tokens`).
 4. Allow notifications when prompted. For sticky banners: System Settings
    > Notifications > TeamsNotifier > Banner style **Alerts**.
 5. Menu `TN` should show `connected`. Send yourself a Teams message from
@@ -113,7 +118,8 @@ expected — the `?code=` in the address bar is what matters).
 
 Useful flags: `--verbose` (debug to stderr), `--notify-test`,
 `--chat-demo` (open an offline demo chat window on launch),
-`--sign-in`, `--sign-out`, `--offline` (menu only, no network;
+`--signin-demo` (sign-in window on a bundled DEMO stub, fully
+offline), `--sign-in`, `--sign-out`, `--offline` (menu only, no network;
 menu gains `Show demo chat`), `--auth device|loopback` (default
 device), `--help`.
 
@@ -204,7 +210,8 @@ anyone with file access can still read past message text.
   browser + PKCE S256 + RFC 8252 loopback redirect (root path, listener
   started before the port is read). Owner MRI/UPN learned from token
   claims. Refresh token in Keychain; expiry posts "sign-in needed" and
-  reopens sign-in. No app registration, no admin consent. DISCLOSURE:
+  reopens the in-app sign-in window. No app registration, no admin
+  consent. DISCLOSURE:
   reuses Microsoft's public Teams client ID (same pattern as
   purple-teams, ost). ASWebAuthenticationSession was specced but cannot
   work here (needs a custom scheme registered on the OAuth client, which
