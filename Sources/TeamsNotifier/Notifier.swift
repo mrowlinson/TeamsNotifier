@@ -21,6 +21,9 @@ public final class Notifier: NSObject, @unchecked Sendable {
     /// Open-chat handler, wired by App (needs TeamsAPI + chat title).
     public var onOpenChat: (@Sendable (String) async -> Void)?
 
+    /// Sign-in tap handler, wired by App (opens/focuses the sign-in window).
+    public var onSignInOpen: (@Sendable () async -> Void)?
+
     private override init() {
         super.init()
     }
@@ -47,7 +50,12 @@ public final class Notifier: NSObject, @unchecked Sendable {
         let message = UNNotificationCategory(
             identifier: ReplyInfo.categoryID, actions: [reply, open],
             intentIdentifiers: [], options: [])
-        center.setNotificationCategories([message])
+        // Sign-in challenge: no actions; the tap itself opens the window
+        // (delegate branch below). The category marks it for that branch.
+        let signIn = UNNotificationCategory(
+            identifier: SignInInfo.categoryID, actions: [],
+            intentIdentifiers: [], options: [])
+        center.setNotificationCategories([message, signIn])
     }
 
     public func requestAuthorization() async -> Bool {
@@ -93,6 +101,25 @@ public final class Notifier: NSObject, @unchecked Sendable {
     public func postSystem(title: String, body: String) {
         post(title: title, body: body, id: "system-\(title)")
     }
+
+    /// Sign-in challenge banner: tapping it opens/focuses the sign-in
+    /// window (never copies). Fixed id replaces the stale-code banner.
+    public func postSignIn(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body.isEmpty ? "(no text content)" : body
+        content.sound = .default
+        content.categoryIdentifier = SignInInfo.categoryID
+        content.userInfo = SignInInfo.userInfo()
+        let req = UNNotificationRequest(
+            identifier: SignInInfo.notificationID,
+            content: content,
+            trigger: nil
+        )
+        center.add(req) { err in
+            if let err { Log.fault("notification post failed: \(err)") }
+        }
+    }
 }
 
 extension Notifier: UNUserNotificationCenterDelegate {
@@ -100,6 +127,15 @@ extension Notifier: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // Sign-in banner tap: open/focus the window, never copy. Dismiss
+        // is a no-op (no window pop on swipe-away).
+        let content = response.notification.request.content
+        if SignInInfo.isSignIn(category: content.categoryIdentifier, userInfo: content.userInfo) {
+            if response.actionIdentifier != UNNotificationDismissActionIdentifier {
+                await onSignInOpen?()
+            }
+            return
+        }
         // Reply action: POST the text to the thread. Silent on success
         // (debug log), loud system notification on failure. Never copies.
         if response.actionIdentifier == ReplyInfo.replyActionID,
